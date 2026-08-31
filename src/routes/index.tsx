@@ -1,13 +1,68 @@
 import { useRouter } from "@tanstack/react-router"
 import { useState } from "react"
 import { createFileRoute } from "@tanstack/react-router"
-import { addFeeding, deleteFeeding, listFeedings } from "../server/api"
+import { addFeeding, deleteFeeding, isAuthed, listFeedings, login, logout } from "../server/api"
 import type { FeedingView } from "../server/feedings"
 
 export const Route = createFileRoute("/")({
-  loader: () => listFeedings(),
+  loader: async () => {
+    const authed = await isAuthed()
+    // Feedings are only loaded for signed-in visitors.
+    return { authed, feedings: authed ? await listFeedings() : [] }
+  },
   component: Home,
 })
+
+function PinGate() {
+  const router = useRouter()
+  const [pin, setPin] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const ok = await login({ data: { pin } })
+      if (ok) {
+        setPin("")
+        await router.invalidate()
+      } else {
+        setError("Wrong PIN.")
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <main className="page">
+      <form className="card form pin-gate" onSubmit={submit}>
+        <span className="pin-logo">🍼</span>
+        <h1>Mampf</h1>
+        <label className="field">
+          <span>Family PIN</span>
+          <input
+            type="password"
+            inputMode="numeric"
+            autoComplete="current-password"
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            autoFocus
+            required
+          />
+        </label>
+        {error && <p className="error">{error}</p>}
+        <button className="primary" type="submit" disabled={busy}>
+          {busy ? "Checking…" : "Unlock"}
+        </button>
+      </form>
+    </main>
+  )
+}
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
 function toLocalInputValue(date: Date): string {
@@ -74,8 +129,13 @@ function timeAgo(iso: string): string {
 }
 
 function Home() {
+  const { authed, feedings } = Route.useLoaderData()
+  if (!authed) return <PinGate />
+  return <Tracker feedings={feedings} />
+}
+
+function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
   const router = useRouter()
-  const feedings = Route.useLoaderData()
   const [amount, setAmount] = useState("90")
   const [fedAt, setFedAt] = useState(() => toLocalInputValue(new Date()))
   const [error, setError] = useState<string | null>(null)
@@ -125,6 +185,17 @@ function Home() {
 
   return (
     <main className="page">
+      <button
+        type="button"
+        className="signout"
+        aria-label="Sign out"
+        onClick={async () => {
+          await logout()
+          await router.invalidate()
+        }}
+      >
+        Sign out
+      </button>
       <header className="header">
         <span className="logo">🍼</span>
         <div>

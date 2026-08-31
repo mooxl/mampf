@@ -241,3 +241,44 @@ body {
   color: var(--muted);
   padding: 24px 0;
 }
+
+.signout {
+  align-self: flex-end;
+  font: inherit;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.signout:hover {
+  color: var(--danger);
+}
+
+.pin-gate {
+  margin-top: 25vh;
+  text-align: center;
+  gap: 14px;
+}
+
+.pin-gate .pin-logo {
+  font-size: 44px;
+}
+
+.pin-gate h1 {
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.pin-gate .field {
+  text-align: left;
+}
+
+.pin-gate input {
+  text-align: center;
+  font-size: 22px;
+  letter-spacing: 0.3em;
+}

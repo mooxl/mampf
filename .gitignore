@@ -10,3 +10,4 @@ routeTree.gen*.ts
 # Local review artifacts
 .amp/in/
 .amp/portals/
+.dev.vars

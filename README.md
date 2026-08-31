@@ -38,20 +38,40 @@ starting Vite automatically.
 2. Put the returned `database_id` into `wrangler.jsonc` (replace the
    placeholder UUID).
 
-3. Deploy:
+3. Set the shared family PIN as a secret:
+
+   ```sh
+   npx wrangler secret put PIN
+   ```
+
+4. Deploy:
 
    ```sh
    pnpm db:migrate:remote  # apply migrations to the real database
    pnpm deploy             # build + wrangler deploy
    ```
 
+## Access protection
+
+The app is protected by a single shared PIN that you both use:
+
+- Locally, set it in `.dev.vars` (gitignored): `PIN=1234`
+- In production, set it with `wrangler secret put PIN`
+- After unlocking, a long-lived `httpOnly` cookie keeps you signed in
+  (session token = salted SHA-256 of the PIN, so the cookie never
+  contains the PIN itself)
+- Every server function (list/add/delete) re-validates the cookie, and the
+  loader never loads feedings for signed-out visitors
+- "Sign out" clears the cookie
+
 ## Structure
 
 ```
 src/
-├── routes/index.tsx      # UI: add form, quick amounts, per-day history
+├── routes/index.tsx      # UI: PIN gate, add form, quick amounts, per-day history
 ├── routes/__root.tsx     # HTML shell
 ├── server/api.ts         # TanStack Start server functions (HTTP boundary)
+├── server/auth.server.ts # Shared-PIN session handling (cookie + salted hash)
 ├── server/feedings.ts    # Effect domain: Feeding model + Feedings service
 ├── server/runtime.ts     # ManagedRuntime: layers + D1 binding wiring
 └── styles.css
