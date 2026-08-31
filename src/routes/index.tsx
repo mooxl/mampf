@@ -1,6 +1,6 @@
-import { useRouter } from "@tanstack/react-router"
+import { useForm, useSelector } from "@tanstack/react-form"
+import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { useState } from "react"
-import { createFileRoute } from "@tanstack/react-router"
 import { addFeeding, deleteFeeding, isAuthed, listFeedings, login, logout } from "../server/api"
 import type { FeedingView } from "../server/feedings"
 
@@ -15,49 +15,65 @@ export const Route = createFileRoute("/")({
 
 function PinGate() {
   const router = useRouter()
-  const [pin, setPin] = useState("")
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setBusy(true)
-    setError(null)
-    try {
-      const ok = await login({ data: { pin } })
-      if (ok) {
-        setPin("")
-        await router.invalidate()
-      } else {
-        setError("Wrong PIN.")
+  const form = useForm({
+    defaultValues: { pin: "" },
+    onSubmit: async ({ value }) => {
+      setError(null)
+      try {
+        const ok = await login({ data: { pin: value.pin } })
+        if (ok) {
+          await router.invalidate()
+        } else {
+          setError("Wrong PIN.")
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong.")
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.")
-    } finally {
-      setBusy(false)
-    }
-  }
+    },
+  })
+
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
 
   return (
     <main className="page">
-      <form className="card form pin-gate" onSubmit={submit}>
+      <form
+        className="card form pin-gate"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          form.handleSubmit()
+        }}
+      >
         <span className="pin-logo">🍼</span>
         <h1>Mampf</h1>
-        <label className="field">
-          <span>Family PIN</span>
-          <input
-            type="password"
-            inputMode="numeric"
-            autoComplete="current-password"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-            autoFocus
-            required
-          />
-        </label>
+        <form.Field
+          name="pin"
+          validators={{
+            onChange: ({ value }) => (value ? undefined : "Enter the family PIN."),
+          }}
+          children={(field) => (
+            <label className="field">
+              <span>Family PIN</span>
+              <input
+                type="password"
+                inputMode="numeric"
+                autoComplete="current-password"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+                autoFocus
+              />
+              {field.state.meta.errors.length > 0 && (
+                <span className="error">{field.state.meta.errors.join(", ")}</span>
+              )}
+            </label>
+          )}
+        />
         {error && <p className="error">{error}</p>}
-        <button className="primary" type="submit" disabled={busy}>
-          {busy ? "Checking…" : "Unlock"}
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Checking…" : "Unlock"}
         </button>
       </form>
     </main>
@@ -136,51 +152,53 @@ function Home() {
 
 function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
   const router = useRouter()
-  const [amount, setAmount] = useState("90")
-  const [fedAt, setFedAt] = useState(() => toLocalInputValue(new Date()))
   const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
+  const form = useForm({
+    defaultValues: {
+      amount: "90",
+      fedAt: toLocalInputValue(new Date()),
+    },
+    onSubmit: async ({ value }) => {
+      setError(null)
+      try {
+        // `new Date(...)` interprets the datetime-local value in the user's
+        // timezone; we store the instant as UTC ISO.
+        await addFeeding({
+          data: {
+            amountMl: Math.round(Number(value.amount)),
+            fedAt: new Date(value.fedAt).toISOString(),
+          },
+        })
+        await router.invalidate()
+        form.setFieldValue("fedAt", toLocalInputValue(new Date()))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong.")
+      }
+    },
+  })
+
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
 
   const days = groupByDay(feedings)
   const todayKey = toLocalInputValue(new Date()).slice(0, 10)
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0
   const lastFeeding = feedings[0]
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const ml = Number(amount)
-    if (!Number.isFinite(ml) || ml <= 0) {
-      setError("Please enter a valid amount in ml.")
-      return
-    }
-    setBusy(true)
-    setError(null)
-    try {
-      // `new Date(...)` interprets the datetime-local value in the user's
-      // timezone; we store the instant as UTC ISO.
-      await addFeeding({ data: { amountMl: Math.round(ml), fedAt: new Date(fedAt).toISOString() } })
-      await router.invalidate()
-      setFedAt(toLocalInputValue(new Date()))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong.")
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const remove = async (id: string) => {
-    setBusy(true)
+    setDeleting(true)
     try {
       await deleteFeeding({ data: { id } })
       await router.invalidate()
     } finally {
-      setBusy(false)
+      setDeleting(false)
     }
   }
 
   const applyQuickAmount = (ml: number) => {
-    setAmount(String(ml))
-    setFedAt(toLocalInputValue(new Date()))
+    form.setFieldValue("amount", String(ml))
+    form.setFieldValue("fedAt", toLocalInputValue(new Date()))
   }
 
   return (
@@ -221,29 +239,62 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
         </div>
       </section>
 
-      <form className="card form" onSubmit={submit}>
+      <form
+        className="card form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          form.handleSubmit()
+        }}
+      >
         <div className="form-row">
-          <label className="field">
-            <span>Amount (ml)</span>
-            <input
-              type="number"
-              inputMode="numeric"
-              min={1}
-              max={2000}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              required
-            />
-          </label>
-          <label className="field">
-            <span>Time</span>
-            <input
-              type="datetime-local"
-              value={fedAt}
-              onChange={(e) => setFedAt(e.target.value)}
-              required
-            />
-          </label>
+          <form.Field
+            name="amount"
+            validators={{
+              onChange: ({ value }) => {
+                const ml = Number(value)
+                if (!Number.isFinite(ml) || ml <= 0) return "Please enter a valid amount in ml."
+                if (ml > 2000) return "Amount must be at most 2000 ml."
+                return undefined
+              },
+            }}
+            children={(field) => (
+              <label className="field">
+                <span>Amount (ml)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={2000}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+                {field.state.meta.errors.length > 0 && (
+                  <span className="error">{field.state.meta.errors.join(", ")}</span>
+                )}
+              </label>
+            )}
+          />
+          <form.Field
+            name="fedAt"
+            validators={{
+              onChange: ({ value }) => (value ? undefined : "Please pick a time."),
+            }}
+            children={(field) => (
+              <label className="field">
+                <span>Time</span>
+                <input
+                  type="datetime-local"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+                {field.state.meta.errors.length > 0 && (
+                  <span className="error">{field.state.meta.errors.join(", ")}</span>
+                )}
+              </label>
+            )}
+          />
         </div>
 
         <div className="quick">
@@ -256,8 +307,8 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
 
         {error && <p className="error">{error}</p>}
 
-        <button className="primary" type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Add feeding"}
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Add feeding"}
         </button>
       </form>
 
@@ -282,7 +333,7 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
                       type="button"
                       className="delete"
                       aria-label={`Delete feeding at ${formatTime(entry.fedAt)}`}
-                      disabled={busy}
+                      disabled={deleting || isSubmitting}
                       onClick={() => remove(entry.id)}
                     >
                       ✕
