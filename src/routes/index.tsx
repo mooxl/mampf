@@ -1,17 +1,19 @@
-import { useForm, useSelector } from "@tanstack/react-form";
+import { RegistryProvider, useAtom } from "@effect/atom-react";
+import { useForm } from "@tanstack/react-form";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { useState } from "react";
 import {
-  addFeeding,
-  addPumping,
-  deleteFeeding,
-  deletePumping,
-  isAuthed,
-  listFeedings,
-  listPumpings,
-  login,
-  logout,
-} from "../server/api";
+  addFeedingAtom,
+  addPumpingAtom,
+  deleteFeedingAtom,
+  deletePumpingAtom,
+  loginAtom,
+  logoutAtom,
+} from "../client/atoms";
+import { loadFeedings, loadPumpings } from "../client/workflows";
+import { isAuthed } from "../server/api";
+import type { ApiErrorData } from "../shared/api";
 import type { FeedingView } from "../server/feedings";
 import type { PumpSide, PumpingView } from "../server/pumpings";
 
@@ -21,35 +23,32 @@ export const Route = createFileRoute("/")({
     // Entries are only loaded for signed-in visitors.
     return {
       authed,
-      feedings: authed ? await listFeedings() : [],
-      pumpings: authed ? await listPumpings() : [],
+      feedings: authed ? await loadFeedings() : [],
+      pumpings: authed ? await loadPumpings() : [],
     };
   },
-  component: Home,
+  // A per-request Atom registry keeps the mutation atoms request-safe during SSR.
+  component: () => (
+    <RegistryProvider>
+      <Home />
+    </RegistryProvider>
+  ),
 });
 
 function PinGate() {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const [loginResult, runLogin] = useAtom(loginAtom, { mode: "promiseExit" });
 
   const form = useForm({
     defaultValues: { pin: "" },
-    onSubmit: async ({ value }) => {
-      setError(null);
-      try {
-        const ok = await login({ data: { pin: value.pin } });
-        if (ok) {
-          await router.invalidate();
-        } else {
-          setError("Wrong PIN.");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.");
-      }
+    onSubmit: ({ value }) => {
+      void runLogin(value.pin).then((exit) => {
+        if (exit._tag === "Success") void router.invalidate();
+      });
     },
   });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
+  const isSubmitting = loginResult.waiting;
 
   return (
     <main className="page">
@@ -86,7 +85,12 @@ function PinGate() {
             </label>
           )}
         />
-        {error && <p className="error">{error}</p>}
+        {AsyncResult.matchWithWaiting(loginResult, {
+          onWaiting: () => null,
+          onSuccess: () => null,
+          onError: (error) => <p className="error">{error.message}</p>,
+          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+        })}
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Checking…" : "Unlock"}
         </button>
@@ -171,6 +175,19 @@ const SIDE_LABELS: Record<PumpSide, string> = {
   both: "Both",
 };
 
+/**
+ * Renders the lifecycle of a mutation atom: typed errors with their message,
+ * defects (unexpected bugs) generically. Waiting/success render nothing.
+ */
+function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, ApiErrorData> }) {
+  return AsyncResult.matchWithWaiting(result, {
+    onWaiting: () => null,
+    onSuccess: () => null,
+    onError: (error) => <p className="error">{error.message}</p>,
+    onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+  });
+}
+
 function Home() {
   const { authed, feedings, pumpings } = Route.useLoaderData();
   if (!authed) return <PinGate />;
@@ -187,6 +204,7 @@ function Tracker({
   pumpings: Array<PumpingView>;
 }) {
   const router = useRouter();
+  const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
   const [tab, setTab] = useState<Tab>("feeding");
 
   return (
@@ -197,9 +215,10 @@ function Tracker({
           type="button"
           className="signout"
           aria-label="Sign out"
-          onClick={async () => {
-            await logout();
-            await router.invalidate();
+          onClick={() => {
+            void runLogout(undefined).then((exit) => {
+              if (exit._tag === "Success") void router.invalidate();
+            });
           }}
         >
           Sign out
@@ -234,48 +253,44 @@ function Tracker({
 
 function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [addResult, runAdd] = useAtom(addFeedingAtom, { mode: "promiseExit" });
+  const [deleteResult, runDelete] = useAtom(deleteFeedingAtom, { mode: "promiseExit" });
+  const busy = addResult.waiting || deleteResult.waiting;
 
   const form = useForm({
     defaultValues: {
       amount: "90",
       fedAt: toLocalInputValue(new Date()),
     },
-    onSubmit: async ({ value }) => {
-      setError(null);
-      try {
+    onSubmit: ({ value }) => {
+      void runAdd({
+        amountMl: Math.round(Number(value.amount)),
         // `new Date(...)` interprets the datetime-local value in the user's
         // timezone; we store the instant as UTC ISO.
-        await addFeeding({
-          data: {
-            amountMl: Math.round(Number(value.amount)),
-            fedAt: new Date(value.fedAt).toISOString(),
-          },
-        });
-        await router.invalidate();
-        form.setFieldValue("fedAt", toLocalInputValue(new Date()));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.");
-      }
+        fedAt: new Date(value.fedAt).toISOString(),
+      }).then((exit) => {
+        if (exit._tag === "Success") {
+          // Reset the whole form (defaults + cleared validation) and bump the
+          // time field to "now" for the next entry.
+          form.reset();
+          form.setFieldValue("fedAt", toLocalInputValue(new Date()));
+          void router.invalidate();
+        }
+      });
     },
   });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
+  const isSubmitting = addResult.waiting;
 
   const days = groupByDay(feedings, (f) => f.fedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
   const lastFeeding = feedings[0];
 
-  const remove = async (id: string) => {
-    setDeleting(true);
-    try {
-      await deleteFeeding({ data: { id } });
-      await router.invalidate();
-    } finally {
-      setDeleting(false);
-    }
+  const remove = (id: string) => {
+    void runDelete(id).then((exit) => {
+      if (exit._tag === "Success") void router.invalidate();
+    });
   };
 
   const applyQuickAmount = (ml: number) => {
@@ -366,12 +381,19 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
           ))}
         </div>
 
-        {error && <p className="error">{error}</p>}
+        {AsyncResult.matchWithWaiting(addResult, {
+          onWaiting: () => null,
+          onSuccess: () => null,
+          onError: (error) => <p className="error">{error.message}</p>,
+          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+        })}
 
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Saving…" : "Add feeding"}
         </button>
       </form>
+
+      <WorkflowStatus result={deleteResult} />
 
       <section className="history">
         {days.length === 0 ? (
@@ -394,7 +416,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
                       type="button"
                       className="delete"
                       aria-label={`Delete feeding at ${formatTime(entry.fedAt)}`}
-                      disabled={deleting || isSubmitting}
+                      disabled={busy}
                       onClick={() => remove(entry.id)}
                     >
                       ✕
@@ -412,8 +434,9 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
 
 function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const [addResult, runAdd] = useAtom(addPumpingAtom, { mode: "promiseExit" });
+  const [deleteResult, runDelete] = useAtom(deletePumpingAtom, { mode: "promiseExit" });
+  const busy = addResult.waiting || deleteResult.waiting;
 
   const form = useForm({
     defaultValues: {
@@ -422,27 +445,25 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
       amount: "",
       pumpedAt: toLocalInputValue(new Date()),
     },
-    onSubmit: async ({ value }) => {
-      setError(null);
-      try {
-        await addPumping({
-          data: {
-            side: value.side,
-            durationMin: Math.round(Number(value.duration)),
-            amountMl: Math.round(Number(value.amount)),
-            pumpedAt: new Date(value.pumpedAt).toISOString(),
-          },
-        });
-        await router.invalidate();
-        form.setFieldValue("amount", "");
-        form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.");
-      }
+    onSubmit: ({ value }) => {
+      void runAdd({
+        side: value.side,
+        durationMin: Math.round(Number(value.duration)),
+        amountMl: Math.round(Number(value.amount)),
+        pumpedAt: new Date(value.pumpedAt).toISOString(),
+      }).then((exit) => {
+        if (exit._tag === "Success") {
+          // Reset the whole form (defaults + cleared validation) and bump the
+          // time field to "now" for the next entry.
+          form.reset();
+          form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
+          void router.invalidate();
+        }
+      });
     },
   });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
+  const isSubmitting = addResult.waiting;
 
   const days = groupByDay(pumpings, (p) => p.pumpedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
@@ -451,14 +472,10 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
   const todayMinutes = today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0;
   const lastPumping = pumpings[0];
 
-  const remove = async (id: string) => {
-    setDeleting(true);
-    try {
-      await deletePumping({ data: { id } });
-      await router.invalidate();
-    } finally {
-      setDeleting(false);
-    }
+  const remove = (id: string) => {
+    void runDelete(id).then((exit) => {
+      if (exit._tag === "Success") void router.invalidate();
+    });
   };
 
   const applyQuickDuration = (min: number) => {
@@ -601,12 +618,19 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
           ))}
         </div>
 
-        {error && <p className="error">{error}</p>}
+        {AsyncResult.matchWithWaiting(addResult, {
+          onWaiting: () => null,
+          onSuccess: () => null,
+          onError: (error) => <p className="error">{error.message}</p>,
+          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+        })}
 
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Saving…" : "Add pumping session"}
         </button>
       </form>
+
+      <WorkflowStatus result={deleteResult} />
 
       <section className="history">
         {days.length === 0 ? (
@@ -634,7 +658,7 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
                       type="button"
                       className="delete"
                       aria-label={`Delete pumping session at ${formatTime(entry.pumpedAt)}`}
-                      disabled={deleting || isSubmitting}
+                      disabled={busy}
                       onClick={() => remove(entry.id)}
                     >
                       ✕
