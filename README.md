@@ -19,10 +19,10 @@ format, type check) runs through **Vite+** (`vp`).
 ## Development
 
 ```sh
-pnpm install
-pnpm cf-typegen        # regenerate worker-configuration.d.ts after wrangler.jsonc changes
-pnpm db:migrate:local  # apply migrations to the local D1 database
-pnpm dev               # http://localhost:5173
+vp install               # install dependencies (delegates to pnpm)
+vp run cf-typegen        # regenerate worker-configuration.d.ts after wrangler.jsonc changes
+vp run db:migrate:local  # apply migrations to the local D1 database
+vp dev                   # dev server on http://localhost:5173
 ```
 
 The dev command in `.amp/services.yaml` applies local migrations before
@@ -33,21 +33,22 @@ starting the dev server automatically.
 Everyday commands go through `vp` (the Vite+ CLI):
 
 ```sh
-vp install   # install dependencies (delegates to pnpm)
-vp dev       # dev server
-vp check     # format, type-aware lint, and type checks
-vp build     # production build
+vp install        # install dependencies (delegates to pnpm)
+vp dev            # dev server
+vp check          # format, type-aware lint, and type checks
+vp check --fix    # auto-fix formatting and lint issues
+vp build          # production build
+vp run <script>   # run a script from package.json
 ```
 
-Lint and formatting are configured in `vite.config.ts` (oxlint + oxfmt);
-run `vp check --fix` to auto-fix formatting.
+Lint and formatting are configured in `vite.config.ts` (oxlint + oxfmt).
 
 ## Deploy to Cloudflare
 
 1. Create the database once:
 
    ```sh
-   npx wrangler d1 create mampf-db
+   vp exec wrangler d1 create mampf-db
    ```
 
 2. Put the returned `database_id` into `wrangler.jsonc` (replace the
@@ -56,14 +57,14 @@ run `vp check --fix` to auto-fix formatting.
 3. Set the shared family PIN as a secret:
 
    ```sh
-   npx wrangler secret put PIN
+   vp exec wrangler secret put PIN
    ```
 
 4. Deploy:
 
    ```sh
-   pnpm db:migrate:remote  # apply migrations to the real database
-   pnpm deploy             # build + wrangler deploy
+   vp run db:migrate:remote  # apply migrations to the real database
+   vp run deploy             # build + wrangler deploy
    ```
 
 ## Access protection
