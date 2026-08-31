@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
-    "build": "vp build && tsc --noEmit",
+    "build": "wrangler types && vp build && tsc --noEmit",
     "preview": "vp preview",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types",

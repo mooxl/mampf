@@ -8,8 +8,8 @@
     {
       "binding": "DB",
       "database_name": "mampf-db",
-      // Replace with the id printed by `npx wrangler d1 create mampf-db` before deploying.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "19e62825-338c-4b3a-b881-c86c319448e3",
+      "remote": true,
     },
   ],
   "observability": {
