@@ -1,6 +1,6 @@
 import { RegistryProvider, useAtom } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { useState } from "react";
 import {
@@ -8,7 +8,6 @@ import {
   addPumpingAtom,
   deleteFeedingAtom,
   deletePumpingAtom,
-  loginAtom,
   logoutAtom,
 } from "../client/atoms";
 import { loadFeedings, loadPumpings } from "../client/workflows";
@@ -18,86 +17,28 @@ import type { FeedingView } from "../server/feedings";
 import type { PumpSide, PumpingView } from "../server/pumpings";
 
 export const Route = createFileRoute("/")({
+  // The redirect is a UX gate; every server function still enforces auth.
+  beforeLoad: async () => {
+    if (!(await isAuthed())) {
+      throw redirect({ to: "/pin" });
+    }
+  },
   loader: async () => {
-    const authed = await isAuthed();
-    // Entries are only loaded for signed-in visitors.
     return {
-      authed,
-      feedings: authed ? await loadFeedings() : [],
-      pumpings: authed ? await loadPumpings() : [],
+      feedings: await loadFeedings(),
+      pumpings: await loadPumpings(),
     };
   },
   // A per-request Atom registry keeps the mutation atoms request-safe during SSR.
-  component: () => (
-    <RegistryProvider>
-      <Home />
-    </RegistryProvider>
-  ),
+  component: () => {
+    const { feedings, pumpings } = Route.useLoaderData();
+    return (
+      <RegistryProvider>
+        <Tracker feedings={feedings} pumpings={pumpings} />
+      </RegistryProvider>
+    );
+  },
 });
-
-function PinGate() {
-  const router = useRouter();
-  const [loginResult, runLogin] = useAtom(loginAtom, { mode: "promiseExit" });
-
-  const form = useForm({
-    defaultValues: { pin: "" },
-    onSubmit: ({ value }) => {
-      void runLogin(value.pin).then((exit) => {
-        if (exit._tag === "Success") void router.invalidate();
-      });
-    },
-  });
-
-  const isSubmitting = loginResult.waiting;
-
-  return (
-    <main className="page">
-      <form
-        className="card form pin-gate"
-        noValidate
-        onSubmit={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          form.handleSubmit();
-        }}
-      >
-        <span className="pin-logo">🍼</span>
-        <h1>Mampf</h1>
-        <form.Field
-          name="pin"
-          validators={{
-            onChange: ({ value }) => (value ? undefined : "Enter the family PIN."),
-          }}
-          children={(field) => (
-            <label className="field">
-              <span>Family PIN</span>
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete="current-password"
-                value={field.state.value}
-                onChange={(e) => field.handleChange(e.target.value)}
-                autoFocus
-              />
-              {field.state.meta.errors.length > 0 && (
-                <span className="error">{field.state.meta.errors.join(", ")}</span>
-              )}
-            </label>
-          )}
-        />
-        {AsyncResult.matchWithWaiting(loginResult, {
-          onWaiting: () => null,
-          onSuccess: () => null,
-          onError: (error) => <p className="error">{error.message}</p>,
-          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-        })}
-        <button className="primary" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Checking…" : "Unlock"}
-        </button>
-      </form>
-    </main>
-  );
-}
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
 function toLocalInputValue(date: Date): string {
@@ -186,12 +127,6 @@ function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, A
     onError: (error) => <p className="error">{error.message}</p>,
     onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
   });
-}
-
-function Home() {
-  const { authed, feedings, pumpings } = Route.useLoaderData();
-  if (!authed) return <PinGate />;
-  return <Tracker feedings={feedings} pumpings={pumpings} />;
 }
 
 type Tab = "feeding" | "pumping";
