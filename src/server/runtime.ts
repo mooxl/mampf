@@ -2,6 +2,7 @@ import { D1Client } from "@effect/sql-d1"
 import { Layer, ManagedRuntime } from "effect"
 import { env } from "cloudflare:workers"
 import { Feedings } from "./feedings"
+import { Pumpings } from "./pumpings"
 
 /**
  * The D1 binding from `wrangler.jsonc` (`binding: "DB"`) wrapped as an Effect
@@ -11,4 +12,6 @@ import { Feedings } from "./feedings"
 const DbLive = D1Client.layer({ db: env.DB }).pipe(Layer.orDie)
 
 /** The application runtime used by TanStack Start server functions. */
-export const runtime = ManagedRuntime.make(Feedings.layer.pipe(Layer.provide(DbLive)))
+export const runtime = ManagedRuntime.make(
+  Layer.merge(Feedings.layer, Pumpings.layer).pipe(Layer.provide(DbLive)),
+)

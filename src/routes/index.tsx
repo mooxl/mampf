@@ -1,14 +1,19 @@
 import { useForm, useSelector } from "@tanstack/react-form"
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { useState } from "react"
-import { addFeeding, deleteFeeding, isAuthed, listFeedings, login, logout } from "../server/api"
+import { addFeeding, addPumping, deleteFeeding, deletePumping, isAuthed, listFeedings, listPumpings, login, logout } from "../server/api"
 import type { FeedingView } from "../server/feedings"
+import type { PumpSide, PumpingView } from "../server/pumpings"
 
 export const Route = createFileRoute("/")({
   loader: async () => {
     const authed = await isAuthed()
-    // Feedings are only loaded for signed-in visitors.
-    return { authed, feedings: authed ? await listFeedings() : [] }
+    // Entries are only loaded for signed-in visitors.
+    return {
+      authed,
+      feedings: authed ? await listFeedings() : [],
+      pumpings: authed ? await listPumpings() : [],
+    }
   },
   component: Home,
 })
@@ -89,23 +94,31 @@ function toLocalInputValue(date: Date): string {
   )
 }
 
-interface DayGroup {
+interface DayGroup<T> {
   readonly key: string
   readonly label: string
-  entries: Array<FeedingView>
+  entries: Array<T>
   totalMl: number
 }
 
-function groupByDay(feedings: Array<FeedingView>): Array<DayGroup> {
-  const days = new Map<string, DayGroup>()
+interface EntryBase {
+  readonly id: string
+  readonly amountMl: number
+}
+
+function groupByDay<T extends EntryBase>(
+  entries: Array<T>,
+  at: (entry: T) => string,
+): Array<DayGroup<T>> {
+  const days = new Map<string, DayGroup<T>>()
   const dayFormatter = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
     day: "numeric",
     month: "long",
   })
 
-  for (const feeding of feedings) {
-    const date = new Date(feeding.fedAt)
+  for (const entry of entries) {
+    const date = new Date(at(entry))
     const key = toLocalInputValue(date).slice(0, 10)
     const today = toLocalInputValue(new Date()).slice(0, 10)
     const yesterday = toLocalInputValue(
@@ -119,8 +132,8 @@ function groupByDay(feedings: Array<FeedingView>): Array<DayGroup> {
       group = { key, label, entries: [], totalMl: 0 }
       days.set(key, group)
     }
-    group.entries.push(feeding)
-    group.totalMl = group.totalMl + feeding.amountMl
+    group.entries.push(entry)
+    group.totalMl = group.totalMl + entry.amountMl
   }
 
   return [...days.values()].sort((a, b) => b.key.localeCompare(a.key))
@@ -144,13 +157,76 @@ function timeAgo(iso: string): string {
   return `${days} d ago`
 }
 
-function Home() {
-  const { authed, feedings } = Route.useLoaderData()
-  if (!authed) return <PinGate />
-  return <Tracker feedings={feedings} />
+const SIDE_LABELS: Record<PumpSide, string> = {
+  left: "Left",
+  right: "Right",
+  both: "Both",
 }
 
-function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
+function Home() {
+  const { authed, feedings, pumpings } = Route.useLoaderData()
+  if (!authed) return <PinGate />
+  return <Tracker feedings={feedings} pumpings={pumpings} />
+}
+
+type Tab = "feeding" | "pumping"
+
+function Tracker({
+  feedings,
+  pumpings,
+}: {
+  feedings: Array<FeedingView>
+  pumpings: Array<PumpingView>
+}) {
+  const router = useRouter()
+  const [tab, setTab] = useState<Tab>("feeding")
+
+  return (
+    <main className="page">
+      <header className="header">
+        <h1>Mampf</h1>
+        <button
+          type="button"
+          className="signout"
+          aria-label="Sign out"
+          onClick={async () => {
+            await logout()
+            await router.invalidate()
+          }}
+        >
+          Sign out
+        </button>
+      </header>
+
+      <nav className="tabs" role="tablist" aria-label="Tracker sections">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "feeding"}
+          className={tab === "feeding" ? "tab active" : "tab"}
+          onClick={() => setTab("feeding")}
+        >
+          🍼 Feeding
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "pumping"}
+          className={tab === "pumping" ? "tab active" : "tab"}
+          onClick={() => setTab("pumping")}
+        >
+          🥛 Pumping
+        </button>
+      </nav>
+
+      {tab === "feeding"
+        ? <FeedingTab feedings={feedings} />
+        : <PumpingTab pumpings={pumpings} />}
+    </main>
+  )
+}
+
+function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
   const router = useRouter()
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -181,7 +257,7 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
 
   const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
 
-  const days = groupByDay(feedings)
+  const days = groupByDay(feedings, (f) => f.fedAt)
   const todayKey = toLocalInputValue(new Date()).slice(0, 10)
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0
   const lastFeeding = feedings[0]
@@ -202,26 +278,7 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
   }
 
   return (
-    <main className="page">
-      <button
-        type="button"
-        className="signout"
-        aria-label="Sign out"
-        onClick={async () => {
-          await logout()
-          await router.invalidate()
-        }}
-      >
-        Sign out
-      </button>
-      <header className="header">
-        <span className="logo">🍼</span>
-        <div>
-          <h1>Mampf</h1>
-          <p>Feeding tracker</p>
-        </div>
-      </header>
-
+    <>
       <section className="stats">
         <div className="stat">
           <span className="stat-value">{todayTotal} ml</span>
@@ -345,6 +402,249 @@ function Tracker({ feedings }: { feedings: Array<FeedingView> }) {
           ))
         )}
       </section>
-    </main>
+    </>
+  )
+}
+
+function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
+  const router = useRouter()
+  const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const form = useForm({
+    defaultValues: {
+      side: "both" as PumpSide,
+      duration: "15",
+      amount: "",
+      pumpedAt: toLocalInputValue(new Date()),
+    },
+    onSubmit: async ({ value }) => {
+      setError(null)
+      try {
+        await addPumping({
+          data: {
+            side: value.side,
+            durationMin: Math.round(Number(value.duration)),
+            amountMl: Math.round(Number(value.amount)),
+            pumpedAt: new Date(value.pumpedAt).toISOString(),
+          },
+        })
+        await router.invalidate()
+        form.setFieldValue("amount", "")
+        form.setFieldValue("pumpedAt", toLocalInputValue(new Date()))
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong.")
+      }
+    },
+  })
+
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
+
+  const days = groupByDay(pumpings, (p) => p.pumpedAt)
+  const todayKey = toLocalInputValue(new Date()).slice(0, 10)
+  const today = days.find((d) => d.key === todayKey)
+  const todayTotal = today?.totalMl ?? 0
+  const todayMinutes =
+    today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0
+  const lastPumping = pumpings[0]
+
+  const remove = async (id: string) => {
+    setDeleting(true)
+    try {
+      await deletePumping({ data: { id } })
+      await router.invalidate()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const applyQuickDuration = (min: number) => {
+    form.setFieldValue("duration", String(min))
+    form.setFieldValue("pumpedAt", toLocalInputValue(new Date()))
+  }
+
+  return (
+    <>
+      <section className="stats">
+        <div className="stat">
+          <span className="stat-value">{todayTotal} ml</span>
+          <span className="stat-label">pumped today</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{todayMinutes} min</span>
+          <span className="stat-label">pumping today</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">
+            {lastPumping ? timeAgo(lastPumping.pumpedAt) : "—"}
+          </span>
+          <span className="stat-label">last pump</span>
+        </div>
+      </section>
+
+      <form
+        className="card form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          form.handleSubmit()
+        }}
+      >
+        <form.Field
+          name="side"
+          children={(field) => (
+            <div className="field">
+              <span>Side</span>
+              <div className="segmented" role="radiogroup" aria-label="Pumping side">
+                {(["left", "both", "right"] as const).map((side) => (
+                  <button
+                    key={side}
+                    type="button"
+                    role="radio"
+                    aria-checked={field.state.value === side}
+                    className={field.state.value === side ? "active" : ""}
+                    onClick={() => field.handleChange(side)}
+                  >
+                    {SIDE_LABELS[side]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        />
+
+        <div className="form-row">
+          <form.Field
+            name="duration"
+            validators={{
+              onChange: ({ value }) => {
+                const min = Number(value)
+                if (!Number.isFinite(min) || min <= 0) return "Enter a valid duration in minutes."
+                if (min > 240) return "Duration must be at most 240 min."
+                return undefined
+              },
+            }}
+            children={(field) => (
+              <label className="field">
+                <span>Duration (min)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={240}
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+                {field.state.meta.errors.length > 0 && (
+                  <span className="error">{field.state.meta.errors.join(", ")}</span>
+                )}
+              </label>
+            )}
+          />
+          <form.Field
+            name="amount"
+            validators={{
+              onChange: ({ value }) => {
+                const ml = Number(value)
+                if (!Number.isFinite(ml) || ml <= 0) return "Enter a valid amount in ml."
+                if (ml > 2000) return "Amount must be at most 2000 ml."
+                return undefined
+              },
+            }}
+            children={(field) => (
+              <label className="field">
+                <span>Amount (ml)</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={2000}
+                  placeholder="Output"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+                {field.state.meta.errors.length > 0 && (
+                  <span className="error">{field.state.meta.errors.join(", ")}</span>
+                )}
+              </label>
+            )}
+          />
+        </div>
+
+        <form.Field
+          name="pumpedAt"
+          validators={{
+            onChange: ({ value }) => (value ? undefined : "Please pick a time."),
+          }}
+          children={(field) => (
+            <label className="field">
+              <span>Time</span>
+              <input
+                type="datetime-local"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+              {field.state.meta.errors.length > 0 && (
+                <span className="error">{field.state.meta.errors.join(", ")}</span>
+              )}
+            </label>
+          )}
+        />
+
+        <div className="quick">
+          {[5, 10, 15, 20, 30].map((min) => (
+            <button key={min} type="button" onClick={() => applyQuickDuration(min)}>
+              {min} min
+            </button>
+          ))}
+        </div>
+
+        {error && <p className="error">{error}</p>}
+
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Add pumping session"}
+        </button>
+      </form>
+
+      <section className="history">
+        {days.length === 0 ? (
+          <p className="empty">No pumping sessions logged yet — add the first one above. 🥛</p>
+        ) : (
+          days.map((day) => (
+            <div key={day.key} className="card day">
+              <div className="day-header">
+                <h2>{day.label}</h2>
+                <span className="day-total">
+                  {day.entries.length} · {day.totalMl} ml
+                </span>
+              </div>
+              <ul>
+                {day.entries.map((entry) => (
+                  <li key={entry.id}>
+                    <span className="entry-time">{formatTime(entry.pumpedAt)}</span>
+                    <span className="entry-amount">
+                      {entry.amountMl} ml
+                      <span className="entry-detail">
+                        {SIDE_LABELS[entry.side]} · {entry.durationMin} min
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="delete"
+                      aria-label={`Delete pumping session at ${formatTime(entry.pumpedAt)}`}
+                      disabled={deleting || isSubmitting}
+                      onClick={() => remove(entry.id)}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </section>
+    </>
   )
 }

@@ -1,6 +1,6 @@
 :root {
   color-scheme: light;
-  --bg: #fdf6f3;
+  --bg: #e9f1f5;
   --card: #ffffff;
   --ink: #2d2a32;
   --muted: #8b8492;
@@ -8,7 +8,7 @@
   --accent-dark: #cf4f84;
   --accent-soft: #fbe3ed;
   --danger: #c0392b;
-  --border: #f0e4ea;
+  --border: #dfe8ed;
   --radius: 16px;
 }
 
@@ -36,11 +36,7 @@ body {
 .header {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.logo {
-  font-size: 40px;
+  justify-content: space-between;
 }
 
 .header h1 {
@@ -49,10 +45,31 @@ body {
   letter-spacing: -0.02em;
 }
 
-.header p {
-  margin: 0;
-  color: var(--muted);
+.tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+
+.tab {
+  font: inherit;
   font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 12px;
+  padding: 10px;
+  cursor: pointer;
+}
+
+.tab.active {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
 }
 
 .stats {
@@ -221,6 +238,40 @@ body {
   flex: 1;
 }
 
+.entry-detail {
+  display: block;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.segmented button {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+}
+
+.segmented button.active {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+}
+
 .delete {
   font: inherit;
   border: none;
@@ -243,15 +294,15 @@ body {
 }
 
 .signout {
-  align-self: flex-end;
   font: inherit;
   font-size: 12px;
+  font-weight: 600;
   color: var(--muted);
-  background: none;
-  border: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 8px;
 }
 
 .signout:hover {

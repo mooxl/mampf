@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start"
 import { Effect, Schema } from "effect"
 import { runtime } from "./runtime"
 import { AddFeedingInput, Feedings } from "./feedings"
+import { AddPumpingInput, Pumpings } from "./pumpings"
 import { clearSession, establishSession, sessionValid } from "./auth.server"
 
 async function requireAuth(): Promise<void> {
@@ -54,6 +55,42 @@ export const deleteFeeding = createServerFn({ method: "POST" })
       Effect.gen(function*() {
         const feedings = yield* Feedings
         return yield* feedings.remove(data.id)
+      }),
+    )
+  })
+
+export const listPumpings = createServerFn({ method: "GET" }).handler(async () => {
+  await requireAuth()
+  return runtime.runPromise(
+    Effect.gen(function*() {
+      const pumpings = yield* Pumpings
+      return yield* pumpings.listRecentDays(7)
+    }),
+  )
+})
+
+export const addPumping = createServerFn({ method: "POST" })
+  .validator((data: unknown) => Schema.decodeUnknownSync(AddPumpingInput)(data))
+  .handler(async ({ data }) => {
+    await requireAuth()
+    return runtime.runPromise(
+      Effect.gen(function*() {
+        const pumpings = yield* Pumpings
+        return yield* pumpings.add(data)
+      }),
+    )
+  })
+
+export const deletePumping = createServerFn({ method: "POST" })
+  .validator((data: unknown) =>
+    Schema.decodeUnknownSync(Schema.Struct({ id: Schema.String }))(data)
+  )
+  .handler(async ({ data }) => {
+    await requireAuth()
+    return runtime.runPromise(
+      Effect.gen(function*() {
+        const pumpings = yield* Pumpings
+        return yield* pumpings.remove(data.id)
       }),
     )
   })
