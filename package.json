@@ -12,6 +12,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply mampf-db --remote"
   },
   "dependencies": {
+    "@effect/atom-react": "4.0.0-rc.112",
     "@effect/sql-d1": "rc",
     "@tanstack/react-form": "^1.33.5",
     "@tanstack/react-router": "^1.170.32",
