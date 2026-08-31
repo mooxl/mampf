@@ -119,7 +119,8 @@ body {
 
 .form-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* 40/60 so the datetime-local value (wide, unbreakable) fits next to the amount */
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   gap: 10px;
 }
 
@@ -140,6 +141,7 @@ body {
   padding: 10px 12px;
   height: 44px;
   width: 100%;
+  min-width: 0;
   background: var(--bg);
   outline: none;
 }
@@ -148,6 +150,21 @@ body {
 .field select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* iOS renders date inputs with its own native styling that ignores the
+   inherited font, height, and padding, making them oversized. Reset the
+   appearance so they match the other fields. */
+.field input[type="datetime-local"] {
+  -webkit-appearance: none;
+  appearance: none;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+.field input[type="datetime-local"]::-webkit-date-and-time-value {
+  min-height: 22px;
+  text-align: left;
 }
 
 .primary {
