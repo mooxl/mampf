@@ -26,8 +26,8 @@ ensure_toolchain() {
   fi
   if ! command -v pnpm >/dev/null 2>&1; then
     corepack enable
-    corepack prepare pnpm@12.0.0 --activate
   fi
+  corepack prepare pnpm@12.1.0 --activate
   if ! command -v vp >/dev/null 2>&1; then
     echo "Vite+ missing, installing vp..."
     curl -fsSL https://vite.plus | bash

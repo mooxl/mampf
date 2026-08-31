@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vp dev",
-    "build": "vp build && tsc --noEmit",
+    "build": "wrangler types && vp build && tsc --noEmit",
     "preview": "vp preview",
     "deploy": "npm run build && wrangler deploy",
     "cf-typegen": "wrangler types",
@@ -31,5 +31,5 @@
     "vite-plus": "catalog:",
     "wrangler": "^4.74.0"
   },
-  "packageManager": "pnpm@12.0.0"
+  "packageManager": "pnpm@12.1.0"
 }
