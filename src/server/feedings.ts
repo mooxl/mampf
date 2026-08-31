@@ -19,7 +19,7 @@ export type FeedingId = typeof FeedingId.Type;
 
 export class Feeding extends Model.Class<Feeding>("Feeding")({
   id: Model.UuidV4Insert(FeedingId),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
+  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
   fedAt: Schema.DateTimeUtcFromString,
   createdAt: Model.DateTimeInsert,
 }) {}
@@ -45,7 +45,7 @@ const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toU
 
 /** Input validated at the server-function boundary. */
 export const AddFeedingInput = Schema.Struct({
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
+  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
   fedAt: Schema.DateTimeUtcFromString,
 });
 

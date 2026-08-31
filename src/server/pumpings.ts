@@ -16,8 +16,8 @@ export type PumpSide = typeof PumpSide.Type;
 export class Pumping extends Model.Class<Pumping>("Pumping")({
   id: Model.UuidV4Insert(Schema.String.pipe(Schema.brand("PumpingId"))),
   side: PumpSide,
-  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 240 }))),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
+  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
+  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
   pumpedAt: Schema.DateTimeUtcFromString,
   createdAt: Model.DateTimeInsert,
 }) {}
@@ -48,8 +48,8 @@ const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toU
 /** Input validated at the server-function boundary. */
 export const AddPumpingInput = Schema.Struct({
   side: PumpSide,
-  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 240 }))),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
+  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
+  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
   pumpedAt: Schema.DateTimeUtcFromString,
 });
 

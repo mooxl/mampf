@@ -186,6 +186,10 @@ function Tracker({
   );
 }
 
+/** Option values 5..max in steps of 5, for the amount/duration selects. */
+const step5Options = (max: number) =>
+  Array.from({ length: Math.floor(max / 5) }, (_, i) => (i + 1) * 5);
+
 function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
   const router = useRouter();
   const [addResult, runAdd] = useAtom(addFeedingAtom, { mode: "promiseExit" });
@@ -228,11 +232,6 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
     });
   };
 
-  const applyQuickAmount = (ml: number) => {
-    form.setFieldValue("amount", String(ml));
-    form.setFieldValue("fedAt", toLocalInputValue(new Date()));
-  };
-
   return (
     <>
       <section className="stats">
@@ -266,21 +265,23 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
               onChange: ({ value }) => {
                 const ml = Number(value);
                 if (!Number.isFinite(ml) || ml <= 0) return "Please enter a valid amount in ml.";
-                if (ml > 2000) return "Amount must be at most 2000 ml.";
+                if (ml > 1000) return "Amount must be at most 1000 ml.";
                 return undefined;
               },
             }}
             children={(field) => (
               <label className="field">
                 <span>Amount (ml)</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={2000}
+                <select
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
-                />
+                >
+                  {step5Options(1000).map((ml) => (
+                    <option key={ml} value={String(ml)}>
+                      {ml} ml
+                    </option>
+                  ))}
+                </select>
                 {field.state.meta.errors.length > 0 && (
                   <span className="error">{field.state.meta.errors.join(", ")}</span>
                 )}
@@ -306,14 +307,6 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
               </label>
             )}
           />
-        </div>
-
-        <div className="quick">
-          {[30, 60, 90, 120, 150].map((ml) => (
-            <button key={ml} type="button" onClick={() => applyQuickAmount(ml)}>
-              +{ml}
-            </button>
-          ))}
         </div>
 
         {AsyncResult.matchWithWaiting(addResult, {
@@ -377,7 +370,7 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
     defaultValues: {
       side: "both" as PumpSide,
       duration: "15",
-      amount: "",
+      amount: "60",
       pumpedAt: toLocalInputValue(new Date()),
     },
     onSubmit: ({ value }) => {
@@ -411,11 +404,6 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
     void runDelete(id).then((exit) => {
       if (exit._tag === "Success") void router.invalidate();
     });
-  };
-
-  const applyQuickDuration = (min: number) => {
-    form.setFieldValue("duration", String(min));
-    form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
   };
 
   return (
@@ -474,21 +462,23 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
               onChange: ({ value }) => {
                 const min = Number(value);
                 if (!Number.isFinite(min) || min <= 0) return "Enter a valid duration in minutes.";
-                if (min > 240) return "Duration must be at most 240 min.";
+                if (min > 60) return "Duration must be at most 60 min.";
                 return undefined;
               },
             }}
             children={(field) => (
               <label className="field">
                 <span>Duration (min)</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={240}
+                <select
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
-                />
+                >
+                  {step5Options(60).map((min) => (
+                    <option key={min} value={String(min)}>
+                      {min} min
+                    </option>
+                  ))}
+                </select>
                 {field.state.meta.errors.length > 0 && (
                   <span className="error">{field.state.meta.errors.join(", ")}</span>
                 )}
@@ -501,22 +491,23 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
               onChange: ({ value }) => {
                 const ml = Number(value);
                 if (!Number.isFinite(ml) || ml <= 0) return "Enter a valid amount in ml.";
-                if (ml > 2000) return "Amount must be at most 2000 ml.";
+                if (ml > 1000) return "Amount must be at most 1000 ml.";
                 return undefined;
               },
             }}
             children={(field) => (
               <label className="field">
                 <span>Amount (ml)</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={2000}
-                  placeholder="Output"
+                <select
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
-                />
+                >
+                  {step5Options(1000).map((ml) => (
+                    <option key={ml} value={String(ml)}>
+                      {ml} ml
+                    </option>
+                  ))}
+                </select>
                 {field.state.meta.errors.length > 0 && (
                   <span className="error">{field.state.meta.errors.join(", ")}</span>
                 )}
@@ -544,14 +535,6 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
             </label>
           )}
         />
-
-        <div className="quick">
-          {[5, 10, 15, 20, 30].map((min) => (
-            <button key={min} type="button" onClick={() => applyQuickDuration(min)}>
-              {min} min
-            </button>
-          ))}
-        </div>
 
         {AsyncResult.matchWithWaiting(addResult, {
           onWaiting: () => null,

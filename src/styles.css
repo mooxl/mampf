@@ -131,41 +131,23 @@ body {
   color: var(--muted);
 }
 
-.field input {
+.field input,
+.field select {
   font: inherit;
   color: var(--ink);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 10px 12px;
+  height: 44px;
+  width: 100%;
   background: var(--bg);
   outline: none;
 }
 
-.field input:focus {
+.field input:focus,
+.field select:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.quick {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.quick button {
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--accent-dark);
-  background: var(--accent-soft);
-  border: none;
-  border-radius: 999px;
-  padding: 8px 14px;
-  cursor: pointer;
-}
-
-.quick button:hover {
-  background: #f7d3e2;
 }
 
 .primary {
@@ -337,4 +319,5 @@ body {
   text-align: center;
   font-size: 22px;
   letter-spacing: 0.3em;
+  height: auto;
 }
