@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Amp orb setup for mampf: toolchain check, dependencies, typegen, local D1.
+# Idempotent and safe to re-run on a warm snapshot.
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+repo_root="$PWD"
+
+step() {
+  local name="$1"; shift
+  local start=$SECONDS
+  echo "==> ${name}"
+  "$@"
+  echo "    done in $((SECONDS - start))s"
+}
+
+# --- Toolchain (preinstalled in the orb base image; install only if missing) ---
+ensure_toolchain() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js missing, installing Node 22 via NodeSource..."
+    apt-get update -qq
+    apt-get install -y -qq ca-certificates curl gnupg
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y -qq nodejs
+  fi
+  if ! command -v pnpm >/dev/null 2>&1; then
+    corepack enable
+    corepack prepare pnpm@12.0.0 --activate
+  fi
+  node --version
+  pnpm --version
+}
+step "toolchain" ensure_toolchain
+
+step "dependencies" pnpm install --frozen-lockfile
+
+# Regenerate the Cloudflare worker types (gitignored, needed for `tsc --noEmit`).
+step "typegen" pnpm cf-typegen
+
+# Local dev PIN so the app is usable in the orb (gitignored).
+if [ ! -f .dev.vars ]; then
+  printf 'PIN=1234\n' > .dev.vars
+  echo "==> created .dev.vars with the default local dev PIN (1234)"
+fi
+
+# Apply D1 migrations to the local miniflare database.
+# Re-runs are cheap: wrangler skips already-applied migrations.
+export CI=true
+export WRANGLER_SEND_METRICS=false
+step "d1 local migrations" pnpm db:migrate:local
+
+# Orb-specific agent guidance (login hint), appended once.
+agents_md="$HOME/.config/amp/AGENTS.md"
+marker="# mampf orb notes"
+if ! grep -Fqx "$marker" "$agents_md" 2>/dev/null; then
+  cat >> "$agents_md" <<EOF
+
+$marker
+- Local dev PIN for the mampf app is 1234 (set in the gitignored .dev.vars).
+- The dev server runs as the supervised "mampf" service; use the portal URL
+  Amp prints (never a raw localhost URL) to open the app.
+EOF
+  echo "==> appended mampf notes to $agents_md"
+fi
+
+echo "==> setup complete"

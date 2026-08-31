@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Amp orb resume for mampf: fast (<10s), idempotent repair only.
+# Never installs dependencies; setup owns that.
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Recreate the local dev PIN file if a cleanup removed it.
+[ -f .dev.vars ] || printf 'PIN=1234\n' > .dev.vars
+
+# Regenerate worker types only if missing (cheap repair, no-op when present).
+if [ ! -f worker-configuration.d.ts ]; then
+  pnpm cf-typegen >/dev/null 2>&1 || true
+fi
