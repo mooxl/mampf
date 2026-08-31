@@ -1,0 +1,12 @@
+node_modules/
+.wrangler/
+.vite/
+dist/
+.env
+*.local
+worker-configuration.d.ts
+routeTree.gen*.ts
+
+# Local review artifacts
+.amp/in/
+.amp/portals/
