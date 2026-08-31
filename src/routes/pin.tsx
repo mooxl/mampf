@@ -46,7 +46,6 @@ function PinGate() {
           form.handleSubmit();
         }}
       >
-        <span className="pin-logo">🍼</span>
         <h1>Mampf</h1>
         <form.Field
           name="pin"

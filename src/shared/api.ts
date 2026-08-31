@@ -14,13 +14,18 @@ export class WrongPin extends Schema.TaggedError<WrongPin>()("WrongPin", {
   message: Schema.String,
 }) {}
 
+/** The server's `PIN` secret is missing (deployment misconfiguration). */
+export class NotConfigured extends Schema.TaggedError<NotConfigured>()("NotConfigured", {
+  message: Schema.String,
+}) {}
+
 /** Transport/protocol failure on the client (network error, 5xx, bad shape). */
 export class RequestFailed extends Schema.TaggedError<RequestFailed>()("RequestFailed", {
   message: Schema.String,
 }) {}
 
 /** Every error that can cross the server-function boundary. */
-export type ApiError = NotAuthed | WrongPin | RequestFailed;
+export type ApiError = NotAuthed | WrongPin | NotConfigured | RequestFailed;
 
 /**
  * How a tagged error looks on the wire: plain, JSON-serializable data. The

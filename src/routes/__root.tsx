@@ -1,4 +1,6 @@
-import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import { HeadContent, Outlet, Scripts, createRootRoute, useRouter } from "@tanstack/react-router";
+import type { ErrorComponentProps } from "@tanstack/react-router";
+import { useState } from "react";
 import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -10,6 +12,7 @@ export const Route = createRootRoute({
     ],
     links: [{ rel: "stylesheet", href: styles }],
   }),
+  errorComponent: RouteError,
   shellComponent: RootDocument,
 });
 
@@ -24,5 +27,39 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
+  );
+}
+
+/**
+ * Retry-friendly replacement for the default error screen: loader/component
+ * failures (expired session, network or database hiccup) render the error
+ * message with a "Try again" button that re-runs the loaders.
+ */
+function RouteError({ error, reset }: ErrorComponentProps) {
+  const router = useRouter();
+  const [retrying, setRetrying] = useState(false);
+
+  const message =
+    error instanceof Error && error.message
+      ? error.message
+      : "Something went wrong while loading Mampf.";
+
+  const retry = () => {
+    setRetrying(true);
+    // Re-run the loaders, then clear the error boundary so the route re-renders.
+    void router.invalidate().then(() => reset());
+  };
+
+  return (
+    <main className="page">
+      <div className="card form">
+        <span className="pin-logo">🍼</span>
+        <h1>Mampf</h1>
+        <p className="error">{message}</p>
+        <button className="primary" type="button" onClick={retry} disabled={retrying}>
+          {retrying ? "Retrying…" : "Try again"}
+        </button>
+      </div>
+    </main>
   );
 }

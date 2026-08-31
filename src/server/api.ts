@@ -34,13 +34,19 @@ function send<A, E extends ApiError>(
 
 /** Fails with `NotAuthed` unless the request carries a valid session cookie. */
 const requireAuth = Effect.gen(function* () {
-  const valid = yield* Effect.promise(() => sessionValid());
+  const valid = yield* sessionValid;
   if (!valid) {
     return yield* new NotAuthed({ message: "Your session has expired. Please sign in again." });
   }
 });
 
-export const isAuthed = createServerFn({ method: "GET" }).handler(() => sessionValid());
+// A missing PIN secret renders the sign-in screen; the actual `NotConfigured`
+// failure surfaces when the visitor tries to sign in, via the `ApiResult` envelope.
+export const isAuthed = createServerFn({ method: "GET" }).handler(() =>
+  runtime.runPromise(
+    sessionValid.pipe(Effect.catchTag("NotConfigured", () => Effect.succeed(false))),
+  ),
+);
 
 export const login = createServerFn({ method: "POST" })
   .validator((data: unknown) =>
@@ -49,7 +55,7 @@ export const login = createServerFn({ method: "POST" })
   .handler(({ data }) =>
     send(
       Effect.gen(function* () {
-        const ok = yield* Effect.promise(() => establishSession(data.pin));
+        const ok = yield* establishSession(data.pin);
         if (!ok) {
           return yield* new WrongPin({ message: "Wrong PIN." });
         }
@@ -57,9 +63,7 @@ export const login = createServerFn({ method: "POST" })
     ),
   );
 
-export const logout = createServerFn({ method: "POST" }).handler(() =>
-  send(Effect.sync(() => clearSession())),
-);
+export const logout = createServerFn({ method: "POST" }).handler(() => send(clearSession));
 
 export const listFeedings = createServerFn({ method: "GET" }).handler(() =>
   send(
