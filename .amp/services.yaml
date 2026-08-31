@@ -1,5 +1,5 @@
 services:
   mampf:
-    command: pnpm db:migrate:local && pnpm exec vite dev --host --port 5173
+    command: pnpm db:migrate:local && pnpm exec vp dev --host --port 5173
     port: 5173
     review: true

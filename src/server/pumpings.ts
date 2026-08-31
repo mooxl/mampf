@@ -1,10 +1,10 @@
-import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect"
-import { Model } from "effect/unstable/schema"
-import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql"
+import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
+import { Model } from "effect/unstable/schema";
+import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
 
 /** Which breast(s) were pumped. */
-export const PumpSide = Schema.Literals(["left", "right", "both"])
-export type PumpSide = typeof PumpSide.Type
+export const PumpSide = Schema.Literals(["left", "right", "both"]);
+export type PumpSide = typeof PumpSide.Type;
 
 /**
  * A single pumping session.
@@ -24,14 +24,14 @@ export class Pumping extends Model.Class<Pumping>("Pumping")({
 
 /** Serializable shape sent to the client (all fields plain strings/numbers). */
 export interface PumpingView {
-  readonly id: string
-  readonly side: PumpSide
-  readonly durationMin: number
-  readonly amountMl: number
+  readonly id: string;
+  readonly side: PumpSide;
+  readonly durationMin: number;
+  readonly amountMl: number;
   /** ISO-8601 UTC string. */
-  readonly pumpedAt: string
+  readonly pumpedAt: string;
   /** ISO-8601 UTC string. */
-  readonly createdAt: string
+  readonly createdAt: string;
 }
 
 const toView = (pumping: Pumping): PumpingView => ({
@@ -41,10 +41,9 @@ const toView = (pumping: Pumping): PumpingView => ({
   amountMl: pumping.amountMl,
   pumpedAt: DateTime.formatIso(pumping.pumpedAt),
   createdAt: DateTime.formatIso(pumping.createdAt),
-})
+});
 
-const toIso = (dt: DateTime.DateTime): string =>
-  DateTime.formatIso(DateTime.toUtc(dt))
+const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toUtc(dt));
 
 /** Input validated at the server-function boundary. */
 export const AddPumpingInput = Schema.Struct({
@@ -52,45 +51,49 @@ export const AddPumpingInput = Schema.Struct({
   durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 240 }))),
   amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
   pumpedAt: Schema.DateTimeUtcFromString,
-})
+});
 
 /**
  * Repository service for pumping sessions. The rest of the app depends on
  * `Pumpings` instead of the database client, so the storage backend stays
  * swappable.
  */
-export class Pumpings extends Context.Service<Pumpings, {
-  add(input: {
-    readonly side: PumpSide
-    readonly durationMin: number
-    readonly amountMl: number
-    readonly pumpedAt: DateTime.Utc
-  }): Effect.Effect<PumpingView>
-  remove(id: string): Effect.Effect<void>
-  listRecentDays(days: number): Effect.Effect<Array<PumpingView>>
-}>()("mampf/server/Pumpings") {
+export class Pumpings extends Context.Service<
+  Pumpings,
+  {
+    add(input: {
+      readonly side: PumpSide;
+      readonly durationMin: number;
+      readonly amountMl: number;
+      readonly pumpedAt: DateTime.Utc;
+    }): Effect.Effect<PumpingView>;
+    remove(id: string): Effect.Effect<void>;
+    listRecentDays(days: number): Effect.Effect<Array<PumpingView>>;
+  }
+>()("mampf/server/Pumpings") {
   static readonly layer = Layer.effect(
     Pumpings,
-    Effect.gen(function*() {
-      const sql = yield* SqlClient.SqlClient
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
 
       const repo = yield* SqlModel.makeRepository(Pumping, {
         tableName: "pumpings",
         spanPrefix: "Pumpings",
-        idColumn: "id"
-      })
+        idColumn: "id",
+      });
 
       const listSince = SqlSchema.findAll({
         Request: Schema.String,
         Result: Pumping,
-        execute: (since) => sql`SELECT * FROM pumpings WHERE pumpedAt >= ${since} ORDER BY pumpedAt DESC`
-      })
+        execute: (since) =>
+          sql`SELECT * FROM pumpings WHERE pumpedAt >= ${since} ORDER BY pumpedAt DESC`,
+      });
 
-      const add = Effect.fn("Pumpings.add")(function*(input: {
-        readonly side: PumpSide
-        readonly durationMin: number
-        readonly amountMl: number
-        readonly pumpedAt: DateTime.Utc
+      const add = Effect.fn("Pumpings.add")(function* (input: {
+        readonly side: PumpSide;
+        readonly durationMin: number;
+        readonly amountMl: number;
+        readonly pumpedAt: DateTime.Utc;
       }) {
         // `Pumping.insert.makeEffect` fills in the generated uuid + `createdAt`
         // using the Effect clock, so tests can control time with `TestClock`.
@@ -98,25 +101,25 @@ export class Pumpings extends Context.Service<Pumpings, {
           Effect.flatMap(repo.insert),
           // Database/encoding failures here are unexpected, so treat them as
           // defects to keep the service error channel focused on the domain.
-          Effect.orDie
-        )
-        return toView(inserted)
-      })
+          Effect.orDie,
+        );
+        return toView(inserted);
+      });
 
-      const remove = Effect.fn("Pumpings.remove")(function*(id: string) {
-        yield* sql`DELETE FROM pumpings WHERE id = ${id}`.pipe(Effect.orDie)
-      })
+      const remove = Effect.fn("Pumpings.remove")(function* (id: string) {
+        yield* sql`DELETE FROM pumpings WHERE id = ${id}`.pipe(Effect.orDie);
+      });
 
-      const listRecentDays = Effect.fn("Pumpings.listRecentDays")(function*(days: number) {
-        const now = yield* DateTime.now
-        const since = toIso(DateTime.subtractDuration(now, Duration.days(days)))
-        const rows = yield* listSince(since).pipe(Effect.orDie)
-        return rows.map(toView)
-      })
+      const listRecentDays = Effect.fn("Pumpings.listRecentDays")(function* (days: number) {
+        const now = yield* DateTime.now;
+        const since = toIso(DateTime.subtractDuration(now, Duration.days(days)));
+        const rows = yield* listSince(since).pipe(Effect.orDie);
+        return rows.map(toView);
+      });
 
-      return Pumpings.of({ add, remove, listRecentDays })
-    })
-  )
+      return Pumpings.of({ add, remove, listRecentDays });
+    }),
+  );
   // The `SqlClient` requirement is provided by the runtime (`src/server/runtime.ts`),
   // so the repository stays independent of the concrete database.
 }

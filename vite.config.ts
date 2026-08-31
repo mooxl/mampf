@@ -1,9 +1,15 @@
-import { defineConfig } from "vite"
-import { cloudflare } from "@cloudflare/vite-plugin"
-import { tanstackStart } from "@tanstack/react-start/plugin/vite"
-import react from "@vitejs/plugin-react"
+import { defineConfig, lazyPlugins } from "vite-plus";
+import { cloudflare } from "@cloudflare/vite-plugin";
+import { tanstackStart } from "@tanstack/react-start/plugin/vite";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
+  fmt: {},
+  lint: {
+    jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
+    rules: { "vite-plus/prefer-vite-plus-imports": "error" },
+    options: { typeAware: true, typeCheck: true },
+  },
   resolve: {
     tsconfigPaths: true,
   },
@@ -12,9 +18,9 @@ export default defineConfig({
   server: {
     allowedHosts: true,
   },
-  plugins: [
+  plugins: lazyPlugins(() => [
     cloudflare({ viteEnvironment: { name: "ssr" } }),
     tanstackStart(),
     react(),
-  ],
-})
+  ]),
+});

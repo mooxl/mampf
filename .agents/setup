@@ -28,8 +28,14 @@ ensure_toolchain() {
     corepack enable
     corepack prepare pnpm@12.0.0 --activate
   fi
+  if ! command -v vp >/dev/null 2>&1; then
+    echo "Vite+ missing, installing vp..."
+    curl -fsSL https://vite.plus | bash
+  fi
+  export PATH="$HOME/.local/share/vite-plus/bin:$PATH"
   node --version
   pnpm --version
+  vp --version
 }
 step "toolchain" ensure_toolchain
 

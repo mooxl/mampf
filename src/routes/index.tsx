@@ -1,45 +1,55 @@
-import { useForm, useSelector } from "@tanstack/react-form"
-import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { useState } from "react"
-import { addFeeding, addPumping, deleteFeeding, deletePumping, isAuthed, listFeedings, listPumpings, login, logout } from "../server/api"
-import type { FeedingView } from "../server/feedings"
-import type { PumpSide, PumpingView } from "../server/pumpings"
+import { useForm, useSelector } from "@tanstack/react-form";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
+import {
+  addFeeding,
+  addPumping,
+  deleteFeeding,
+  deletePumping,
+  isAuthed,
+  listFeedings,
+  listPumpings,
+  login,
+  logout,
+} from "../server/api";
+import type { FeedingView } from "../server/feedings";
+import type { PumpSide, PumpingView } from "../server/pumpings";
 
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const authed = await isAuthed()
+    const authed = await isAuthed();
     // Entries are only loaded for signed-in visitors.
     return {
       authed,
       feedings: authed ? await listFeedings() : [],
       pumpings: authed ? await listPumpings() : [],
-    }
+    };
   },
   component: Home,
-})
+});
 
 function PinGate() {
-  const router = useRouter()
-  const [error, setError] = useState<string | null>(null)
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
 
   const form = useForm({
     defaultValues: { pin: "" },
     onSubmit: async ({ value }) => {
-      setError(null)
+      setError(null);
       try {
-        const ok = await login({ data: { pin: value.pin } })
+        const ok = await login({ data: { pin: value.pin } });
         if (ok) {
-          await router.invalidate()
+          await router.invalidate();
         } else {
-          setError("Wrong PIN.")
+          setError("Wrong PIN.");
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.")
+        setError(err instanceof Error ? err.message : "Something went wrong.");
       }
     },
-  })
+  });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
 
   return (
     <main className="page">
@@ -47,9 +57,9 @@ function PinGate() {
         className="card form pin-gate"
         noValidate
         onSubmit={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          form.handleSubmit()
+          e.preventDefault();
+          e.stopPropagation();
+          form.handleSubmit();
         }}
       >
         <span className="pin-logo">🍼</span>
@@ -82,104 +92,102 @@ function PinGate() {
         </button>
       </form>
     </main>
-  )
+  );
 }
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
 function toLocalInputValue(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0")
+  const pad = (n: number) => String(n).padStart(2, "0");
   return (
     `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
     `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  )
+  );
 }
 
 interface DayGroup<T> {
-  readonly key: string
-  readonly label: string
-  entries: Array<T>
-  totalMl: number
+  readonly key: string;
+  readonly label: string;
+  entries: Array<T>;
+  totalMl: number;
 }
 
 interface EntryBase {
-  readonly id: string
-  readonly amountMl: number
+  readonly id: string;
+  readonly amountMl: number;
 }
 
 function groupByDay<T extends EntryBase>(
   entries: Array<T>,
   at: (entry: T) => string,
 ): Array<DayGroup<T>> {
-  const days = new Map<string, DayGroup<T>>()
+  const days = new Map<string, DayGroup<T>>();
   const dayFormatter = new Intl.DateTimeFormat(undefined, {
     weekday: "long",
     day: "numeric",
     month: "long",
-  })
+  });
 
   for (const entry of entries) {
-    const date = new Date(at(entry))
-    const key = toLocalInputValue(date).slice(0, 10)
-    const today = toLocalInputValue(new Date()).slice(0, 10)
-    const yesterday = toLocalInputValue(
-      new Date(Date.now() - 24 * 60 * 60 * 1000),
-    ).slice(0, 10)
+    const date = new Date(at(entry));
+    const key = toLocalInputValue(date).slice(0, 10);
+    const today = toLocalInputValue(new Date()).slice(0, 10);
+    const yesterday = toLocalInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000)).slice(0, 10);
     const label =
-      key === today ? "Today" : key === yesterday ? "Yesterday" : dayFormatter.format(date)
+      key === today ? "Today" : key === yesterday ? "Yesterday" : dayFormatter.format(date);
 
-    let group = days.get(key)
+    let group = days.get(key);
     if (!group) {
-      group = { key, label, entries: [], totalMl: 0 }
-      days.set(key, group)
+      group = { key, label, entries: [], totalMl: 0 };
+      days.set(key, group);
     }
-    group.entries.push(entry)
-    group.totalMl = group.totalMl + entry.amountMl
+    group.entries.push(entry);
+    group.totalMl = group.totalMl + entry.amountMl;
   }
 
-  return [...days.values()].sort((a, b) => b.key.localeCompare(a.key))
+  return [...days.values()].sort((a, b) => b.key.localeCompare(a.key));
 }
 
 function formatTime(iso: string): string {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(iso))
+  }).format(new Date(iso));
 }
 
 function timeAgo(iso: string): string {
-  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000))
-  if (minutes < 1) return "just now"
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  const rest = minutes % 60
-  if (hours < 24) return rest > 0 ? `${hours} h ${rest} min ago` : `${hours} h ago`
-  const days = Math.floor(hours / 24)
-  return `${days} d ago`
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 24) return rest > 0 ? `${hours} h ${rest} min ago` : `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} d ago`;
 }
 
 const SIDE_LABELS: Record<PumpSide, string> = {
   left: "Left",
   right: "Right",
   both: "Both",
-}
+};
 
 function Home() {
-  const { authed, feedings, pumpings } = Route.useLoaderData()
-  if (!authed) return <PinGate />
-  return <Tracker feedings={feedings} pumpings={pumpings} />
+  const { authed, feedings, pumpings } = Route.useLoaderData();
+  if (!authed) return <PinGate />;
+  return <Tracker feedings={feedings} pumpings={pumpings} />;
 }
 
-type Tab = "feeding" | "pumping"
+type Tab = "feeding" | "pumping";
 
 function Tracker({
   feedings,
   pumpings,
 }: {
-  feedings: Array<FeedingView>
-  pumpings: Array<PumpingView>
+  feedings: Array<FeedingView>;
+  pumpings: Array<PumpingView>;
 }) {
-  const router = useRouter()
-  const [tab, setTab] = useState<Tab>("feeding")
+  const router = useRouter();
+  const [tab, setTab] = useState<Tab>("feeding");
 
   return (
     <main className="page">
@@ -190,8 +198,8 @@ function Tracker({
           className="signout"
           aria-label="Sign out"
           onClick={async () => {
-            await logout()
-            await router.invalidate()
+            await logout();
+            await router.invalidate();
           }}
         >
           Sign out
@@ -219,17 +227,15 @@ function Tracker({
         </button>
       </nav>
 
-      {tab === "feeding"
-        ? <FeedingTab feedings={feedings} />
-        : <PumpingTab pumpings={pumpings} />}
+      {tab === "feeding" ? <FeedingTab feedings={feedings} /> : <PumpingTab pumpings={pumpings} />}
     </main>
-  )
+  );
 }
 
 function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
-  const router = useRouter()
-  const [error, setError] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const form = useForm({
     defaultValues: {
@@ -237,7 +243,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
       fedAt: toLocalInputValue(new Date()),
     },
     onSubmit: async ({ value }) => {
-      setError(null)
+      setError(null);
       try {
         // `new Date(...)` interprets the datetime-local value in the user's
         // timezone; we store the instant as UTC ISO.
@@ -246,36 +252,36 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
             amountMl: Math.round(Number(value.amount)),
             fedAt: new Date(value.fedAt).toISOString(),
           },
-        })
-        await router.invalidate()
-        form.setFieldValue("fedAt", toLocalInputValue(new Date()))
+        });
+        await router.invalidate();
+        form.setFieldValue("fedAt", toLocalInputValue(new Date()));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.")
+        setError(err instanceof Error ? err.message : "Something went wrong.");
       }
     },
-  })
+  });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
 
-  const days = groupByDay(feedings, (f) => f.fedAt)
-  const todayKey = toLocalInputValue(new Date()).slice(0, 10)
-  const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0
-  const lastFeeding = feedings[0]
+  const days = groupByDay(feedings, (f) => f.fedAt);
+  const todayKey = toLocalInputValue(new Date()).slice(0, 10);
+  const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
+  const lastFeeding = feedings[0];
 
   const remove = async (id: string) => {
-    setDeleting(true)
+    setDeleting(true);
     try {
-      await deleteFeeding({ data: { id } })
-      await router.invalidate()
+      await deleteFeeding({ data: { id } });
+      await router.invalidate();
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
-  }
+  };
 
   const applyQuickAmount = (ml: number) => {
-    form.setFieldValue("amount", String(ml))
-    form.setFieldValue("fedAt", toLocalInputValue(new Date()))
-  }
+    form.setFieldValue("amount", String(ml));
+    form.setFieldValue("fedAt", toLocalInputValue(new Date()));
+  };
 
   return (
     <>
@@ -285,9 +291,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
           <span className="stat-label">today</span>
         </div>
         <div className="stat">
-          <span className="stat-value">
-            {lastFeeding ? timeAgo(lastFeeding.fedAt) : "—"}
-          </span>
+          <span className="stat-value">{lastFeeding ? timeAgo(lastFeeding.fedAt) : "—"}</span>
           <span className="stat-label">last feed</span>
         </div>
         <div className="stat">
@@ -300,9 +304,9 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
         className="card form"
         noValidate
         onSubmit={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          form.handleSubmit()
+          e.preventDefault();
+          e.stopPropagation();
+          form.handleSubmit();
         }}
       >
         <div className="form-row">
@@ -310,10 +314,10 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
             name="amount"
             validators={{
               onChange: ({ value }) => {
-                const ml = Number(value)
-                if (!Number.isFinite(ml) || ml <= 0) return "Please enter a valid amount in ml."
-                if (ml > 2000) return "Amount must be at most 2000 ml."
-                return undefined
+                const ml = Number(value);
+                if (!Number.isFinite(ml) || ml <= 0) return "Please enter a valid amount in ml.";
+                if (ml > 2000) return "Amount must be at most 2000 ml.";
+                return undefined;
               },
             }}
             children={(field) => (
@@ -403,13 +407,13 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
         )}
       </section>
     </>
-  )
+  );
 }
 
 function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
-  const router = useRouter()
-  const [error, setError] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const form = useForm({
     defaultValues: {
@@ -419,7 +423,7 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
       pumpedAt: toLocalInputValue(new Date()),
     },
     onSubmit: async ({ value }) => {
-      setError(null)
+      setError(null);
       try {
         await addPumping({
           data: {
@@ -428,40 +432,39 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
             amountMl: Math.round(Number(value.amount)),
             pumpedAt: new Date(value.pumpedAt).toISOString(),
           },
-        })
-        await router.invalidate()
-        form.setFieldValue("amount", "")
-        form.setFieldValue("pumpedAt", toLocalInputValue(new Date()))
+        });
+        await router.invalidate();
+        form.setFieldValue("amount", "");
+        form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.")
+        setError(err instanceof Error ? err.message : "Something went wrong.");
       }
     },
-  })
+  });
 
-  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting)
+  const isSubmitting = useSelector(form.store, (state) => state.isSubmitting);
 
-  const days = groupByDay(pumpings, (p) => p.pumpedAt)
-  const todayKey = toLocalInputValue(new Date()).slice(0, 10)
-  const today = days.find((d) => d.key === todayKey)
-  const todayTotal = today?.totalMl ?? 0
-  const todayMinutes =
-    today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0
-  const lastPumping = pumpings[0]
+  const days = groupByDay(pumpings, (p) => p.pumpedAt);
+  const todayKey = toLocalInputValue(new Date()).slice(0, 10);
+  const today = days.find((d) => d.key === todayKey);
+  const todayTotal = today?.totalMl ?? 0;
+  const todayMinutes = today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0;
+  const lastPumping = pumpings[0];
 
   const remove = async (id: string) => {
-    setDeleting(true)
+    setDeleting(true);
     try {
-      await deletePumping({ data: { id } })
-      await router.invalidate()
+      await deletePumping({ data: { id } });
+      await router.invalidate();
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
-  }
+  };
 
   const applyQuickDuration = (min: number) => {
-    form.setFieldValue("duration", String(min))
-    form.setFieldValue("pumpedAt", toLocalInputValue(new Date()))
-  }
+    form.setFieldValue("duration", String(min));
+    form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
+  };
 
   return (
     <>
@@ -475,9 +478,7 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
           <span className="stat-label">pumping today</span>
         </div>
         <div className="stat">
-          <span className="stat-value">
-            {lastPumping ? timeAgo(lastPumping.pumpedAt) : "—"}
-          </span>
+          <span className="stat-value">{lastPumping ? timeAgo(lastPumping.pumpedAt) : "—"}</span>
           <span className="stat-label">last pump</span>
         </div>
       </section>
@@ -486,9 +487,9 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
         className="card form"
         noValidate
         onSubmit={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          form.handleSubmit()
+          e.preventDefault();
+          e.stopPropagation();
+          form.handleSubmit();
         }}
       >
         <form.Field
@@ -519,10 +520,10 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
             name="duration"
             validators={{
               onChange: ({ value }) => {
-                const min = Number(value)
-                if (!Number.isFinite(min) || min <= 0) return "Enter a valid duration in minutes."
-                if (min > 240) return "Duration must be at most 240 min."
-                return undefined
+                const min = Number(value);
+                if (!Number.isFinite(min) || min <= 0) return "Enter a valid duration in minutes.";
+                if (min > 240) return "Duration must be at most 240 min.";
+                return undefined;
               },
             }}
             children={(field) => (
@@ -546,10 +547,10 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
             name="amount"
             validators={{
               onChange: ({ value }) => {
-                const ml = Number(value)
-                if (!Number.isFinite(ml) || ml <= 0) return "Enter a valid amount in ml."
-                if (ml > 2000) return "Amount must be at most 2000 ml."
-                return undefined
+                const ml = Number(value);
+                if (!Number.isFinite(ml) || ml <= 0) return "Enter a valid amount in ml.";
+                if (ml > 2000) return "Amount must be at most 2000 ml.";
+                return undefined;
               },
             }}
             children={(field) => (
@@ -646,5 +647,5 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
         )}
       </section>
     </>
-  )
+  );
 }

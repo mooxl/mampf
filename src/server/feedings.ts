@@ -1,6 +1,6 @@
-import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect"
-import { Model } from "effect/unstable/schema"
-import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql"
+import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
+import { Model } from "effect/unstable/schema";
+import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
 
 /**
  * A single milk feeding.
@@ -14,8 +14,8 @@ import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql"
  * - `createdAt` is set automatically by the Effect clock on insert
  */
 /** Branded id so it cannot be mixed up with other strings. */
-export const FeedingId = Schema.String.pipe(Schema.brand("FeedingId"))
-export type FeedingId = typeof FeedingId.Type
+export const FeedingId = Schema.String.pipe(Schema.brand("FeedingId"));
+export type FeedingId = typeof FeedingId.Type;
 
 export class Feeding extends Model.Class<Feeding>("Feeding")({
   id: Model.UuidV4Insert(FeedingId),
@@ -26,12 +26,12 @@ export class Feeding extends Model.Class<Feeding>("Feeding")({
 
 /** Serializable shape sent to the client (all fields plain strings/numbers). */
 export interface FeedingView {
-  readonly id: string
-  readonly amountMl: number
+  readonly id: string;
+  readonly amountMl: number;
   /** ISO-8601 UTC string. */
-  readonly fedAt: string
+  readonly fedAt: string;
   /** ISO-8601 UTC string. */
-  readonly createdAt: string
+  readonly createdAt: string;
 }
 
 const toView = (feeding: Feeding): FeedingView => ({
@@ -39,46 +39,51 @@ const toView = (feeding: Feeding): FeedingView => ({
   amountMl: feeding.amountMl,
   fedAt: DateTime.formatIso(feeding.fedAt),
   createdAt: DateTime.formatIso(feeding.createdAt),
-})
+});
 
-const toIso = (dt: DateTime.DateTime): string =>
-  DateTime.formatIso(DateTime.toUtc(dt))
+const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toUtc(dt));
 
 /** Input validated at the server-function boundary. */
 export const AddFeedingInput = Schema.Struct({
   amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 2000 }))),
   fedAt: Schema.DateTimeUtcFromString,
-})
+});
 
 /**
  * Repository service for feedings. The rest of the app depends on `Feedings`
  * instead of the database client, so the storage backend stays swappable.
  */
-export class Feedings extends Context.Service<Feedings, {
-  add(input: { readonly amountMl: number; readonly fedAt: DateTime.Utc }): Effect.Effect<FeedingView>
-  remove(id: string): Effect.Effect<void>
-  listRecentDays(days: number): Effect.Effect<Array<FeedingView>>
-}>()("mampf/server/Feedings") {
+export class Feedings extends Context.Service<
+  Feedings,
+  {
+    add(input: {
+      readonly amountMl: number;
+      readonly fedAt: DateTime.Utc;
+    }): Effect.Effect<FeedingView>;
+    remove(id: string): Effect.Effect<void>;
+    listRecentDays(days: number): Effect.Effect<Array<FeedingView>>;
+  }
+>()("mampf/server/Feedings") {
   static readonly layer = Layer.effect(
     Feedings,
-    Effect.gen(function*() {
-      const sql = yield* SqlClient.SqlClient
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
 
       const repo = yield* SqlModel.makeRepository(Feeding, {
         tableName: "feedings",
         spanPrefix: "Feedings",
-        idColumn: "id"
-      })
+        idColumn: "id",
+      });
 
       const listSince = SqlSchema.findAll({
         Request: Schema.String,
         Result: Feeding,
-        execute: (since) => sql`SELECT * FROM feedings WHERE fedAt >= ${since} ORDER BY fedAt DESC`
-      })
+        execute: (since) => sql`SELECT * FROM feedings WHERE fedAt >= ${since} ORDER BY fedAt DESC`,
+      });
 
-      const add = Effect.fn("Feedings.add")(function*(input: {
-        readonly amountMl: number
-        readonly fedAt: DateTime.Utc
+      const add = Effect.fn("Feedings.add")(function* (input: {
+        readonly amountMl: number;
+        readonly fedAt: DateTime.Utc;
       }) {
         // `Feeding.insert.makeEffect` fills in the generated uuid + `createdAt`
         // using the Effect clock, so tests can control time with `TestClock`.
@@ -86,25 +91,25 @@ export class Feedings extends Context.Service<Feedings, {
           Effect.flatMap(repo.insert),
           // Database/encoding failures here are unexpected, so treat them as
           // defects to keep the service error channel focused on the domain.
-          Effect.orDie
-        )
-        return toView(inserted)
-      })
+          Effect.orDie,
+        );
+        return toView(inserted);
+      });
 
-      const remove = Effect.fn("Feedings.remove")(function*(id: string) {
-        yield* sql`DELETE FROM feedings WHERE id = ${id}`.pipe(Effect.orDie)
-      })
+      const remove = Effect.fn("Feedings.remove")(function* (id: string) {
+        yield* sql`DELETE FROM feedings WHERE id = ${id}`.pipe(Effect.orDie);
+      });
 
-      const listRecentDays = Effect.fn("Feedings.listRecentDays")(function*(days: number) {
-        const now = yield* DateTime.now
-        const since = toIso(DateTime.subtractDuration(now, Duration.days(days)))
-        const rows = yield* listSince(since).pipe(Effect.orDie)
-        return rows.map(toView)
-      })
+      const listRecentDays = Effect.fn("Feedings.listRecentDays")(function* (days: number) {
+        const now = yield* DateTime.now;
+        const since = toIso(DateTime.subtractDuration(now, Duration.days(days)));
+        const rows = yield* listSince(since).pipe(Effect.orDie);
+        return rows.map(toView);
+      });
 
-      return Feedings.of({ add, remove, listRecentDays })
-    })
-  )
+      return Feedings.of({ add, remove, listRecentDays });
+    }),
+  );
   // The `SqlClient` requirement is provided by the runtime (`src/server/runtime.ts`),
   // so the repository stays independent of the concrete database.
 }
