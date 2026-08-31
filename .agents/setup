@@ -41,6 +41,10 @@ step "toolchain" ensure_toolchain
 
 step "dependencies" pnpm install --frozen-lockfile
 
+# Point origin at GitHub instead of Amp's checkout proxy, so pushes and pulls
+# go straight to GitHub in future orbs.
+step "git remote" git remote set-url origin https://github.com/mooxl/mampf.git
+
 # Regenerate the Cloudflare worker types (gitignored, needed for `tsc --noEmit`).
 step "typegen" pnpm cf-typegen
 
