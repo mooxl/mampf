@@ -1,16 +1,17 @@
-import { RegistryProvider, useAtom } from "@effect/atom-react";
+import { RegistryProvider, useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { Schema } from "effect";
+import { Option, Schema } from "effect";
 import {
   addFeedingAtom,
   addPumpingAtom,
   deleteFeedingAtom,
   deletePumpingAtom,
+  feedingsAtom,
   logoutAtom,
+  pumpingsAtom,
 } from "../client/atoms";
-import { loadFeedings, loadPumpings } from "../client/workflows";
 import { isAuthed } from "../server/api";
 import type { ApiErrorData } from "../shared/api";
 import type { FeedingView } from "../server/feedings";
@@ -31,21 +32,14 @@ export const Route = createFileRoute("/")({
       throw redirect({ to: "/pin" });
     }
   },
-  loader: async () => {
-    return {
-      feedings: await loadFeedings(),
-      pumpings: await loadPumpings(),
-    };
-  },
-  // A per-request Atom registry keeps the mutation atoms request-safe during SSR.
-  component: () => {
-    const { feedings, pumpings } = Route.useLoaderData();
-    return (
-      <RegistryProvider>
-        <Tracker feedings={feedings} pumpings={pumpings} />
-      </RegistryProvider>
-    );
-  },
+  // A per-request Atom registry keeps the query/mutation atoms request-safe
+  // during SSR. The lists are query atoms (`src/client/atoms.ts`) that fetch
+  // on mount and refetch on tab focus via `Atom.swr`.
+  component: () => (
+    <RegistryProvider>
+      <Tracker />
+    </RegistryProvider>
+  ),
 });
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
@@ -148,15 +142,29 @@ const tabSearchSchema = Schema.Struct({
 
 type TabSearch = Schema.Schema.Type<typeof tabSearchSchema>;
 
-function Tracker({
-  feedings,
-  pumpings,
-}: {
-  feedings: Array<FeedingView>;
-  pumpings: Array<PumpingView>;
-}) {
+/**
+ * The latest data carried by a query atom result: the current success value, or
+ * the previous success while a refresh is in flight / has failed — so stale
+ * data stays visible (stale-while-revalidate) instead of the list collapsing
+ * into a loading state.
+ */
+function latestEntries<A>(
+  result: AsyncResult.AsyncResult<Array<A>, ApiErrorData>,
+): Array<A> | undefined {
+  if (result._tag === "Success") return result.value;
+  if (result._tag === "Failure" && Option.isSome(result.previousSuccess)) {
+    return result.previousSuccess.value.value;
+  }
+  return undefined;
+}
+
+function Tracker() {
   const router = useRouter();
   const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
+  // Both query atoms stay mounted so the hidden tab's data stays warm and
+  // participates in focus revalidation.
+  const feedings = useAtomValue(feedingsAtom);
+  const pumpings = useAtomValue(pumpingsAtom);
   const { tab: tabParam } = Route.useSearch();
   const tab: Tab = tabParam ?? "feeding";
   const setTab = (tab: Tab) => {
@@ -202,7 +210,7 @@ function Tracker({
         </button>
       </nav>
 
-      {tab === "feeding" ? <FeedingTab feedings={feedings} /> : <PumpingTab pumpings={pumpings} />}
+      {tab === "feeding" ? <FeedingTab result={feedings} /> : <PumpingTab result={pumpings} />}
     </main>
   );
 }
@@ -211,8 +219,12 @@ function Tracker({
 const step5Options = (max: number) =>
   Array.from({ length: Math.floor(max / 5) }, (_, i) => (i + 1) * 5);
 
-function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
-  const router = useRouter();
+function FeedingTab({
+  result,
+}: {
+  result: AsyncResult.AsyncResult<Array<FeedingView>, ApiErrorData>;
+}) {
+  const refreshFeedings = useAtomRefresh(feedingsAtom);
   const [addResult, runAdd] = useAtom(addFeedingAtom, { mode: "promiseExit" });
   const [deleteResult, runDelete] = useAtom(deleteFeedingAtom, { mode: "promiseExit" });
   const busy = addResult.waiting || deleteResult.waiting;
@@ -234,7 +246,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
           // time field to "now" for the next entry.
           form.reset();
           form.setFieldValue("fedAt", toLocalInputValue(new Date()));
-          void router.invalidate();
+          refreshFeedings();
         }
       });
     },
@@ -242,14 +254,17 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
 
   const isSubmitting = addResult.waiting;
 
-  const days = groupByDay(feedings, (f) => f.fedAt);
+  // `undefined` while the first fetch is in flight (or has failed without any
+  // earlier data); defined (possibly stale) once data has arrived.
+  const feedings = latestEntries(result);
+  const days = groupByDay(feedings ?? [], (f) => f.fedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
-  const lastFeeding = feedings[0];
+  const lastFeeding = feedings?.[0];
 
   const remove = (id: string) => {
     void runDelete(id).then((exit) => {
-      if (exit._tag === "Success") void router.invalidate();
+      if (exit._tag === "Success") refreshFeedings();
     });
   };
 
@@ -257,7 +272,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
     <>
       <section className="stats">
         <div className="stat">
-          <span className="stat-value">{todayTotal} ml</span>
+          <span className="stat-value">{feedings === undefined ? "…" : `${todayTotal} ml`}</span>
           <span className="stat-label">today</span>
         </div>
         <div className="stat">
@@ -265,7 +280,7 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
           <span className="stat-label">last feed</span>
         </div>
         <div className="stat">
-          <span className="stat-value">{feedings.length}</span>
+          <span className="stat-value">{feedings?.length ?? "…"}</span>
           <span className="stat-label">entries (7 d)</span>
         </div>
       </section>
@@ -344,8 +359,17 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
 
       <WorkflowStatus result={deleteResult} />
 
+      {AsyncResult.matchWithWaiting(result, {
+        onWaiting: () => null,
+        onSuccess: () => null,
+        onError: (error) => <p className="error">{error.message}</p>,
+        onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+      })}
+
       <section className="history">
-        {days.length === 0 ? (
+        {feedings === undefined ? (
+          <p className="empty">Loading…</p>
+        ) : days.length === 0 ? (
           <p className="empty">No feedings logged yet — add the first one above. 🍼</p>
         ) : (
           days.map((day) => (
@@ -381,8 +405,12 @@ function FeedingTab({ feedings }: { feedings: Array<FeedingView> }) {
   );
 }
 
-function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
-  const router = useRouter();
+function PumpingTab({
+  result,
+}: {
+  result: AsyncResult.AsyncResult<Array<PumpingView>, ApiErrorData>;
+}) {
+  const refreshPumpings = useAtomRefresh(pumpingsAtom);
   const [addResult, runAdd] = useAtom(addPumpingAtom, { mode: "promiseExit" });
   const [deleteResult, runDelete] = useAtom(deletePumpingAtom, { mode: "promiseExit" });
   const busy = addResult.waiting || deleteResult.waiting;
@@ -406,7 +434,7 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
           // time field to "now" for the next entry.
           form.reset();
           form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
-          void router.invalidate();
+          refreshPumpings();
         }
       });
     },
@@ -414,16 +442,19 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
 
   const isSubmitting = addResult.waiting;
 
-  const days = groupByDay(pumpings, (p) => p.pumpedAt);
+  // `undefined` while the first fetch is in flight (or has failed without any
+  // earlier data); defined (possibly stale) once data has arrived.
+  const pumpings = latestEntries(result);
+  const days = groupByDay(pumpings ?? [], (p) => p.pumpedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
   const today = days.find((d) => d.key === todayKey);
   const todayTotal = today?.totalMl ?? 0;
   const todayMinutes = today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0;
-  const lastPumping = pumpings[0];
+  const lastPumping = pumpings?.[0];
 
   const remove = (id: string) => {
     void runDelete(id).then((exit) => {
-      if (exit._tag === "Success") void router.invalidate();
+      if (exit._tag === "Success") refreshPumpings();
     });
   };
 
@@ -431,11 +462,13 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
     <>
       <section className="stats">
         <div className="stat">
-          <span className="stat-value">{todayTotal} ml</span>
+          <span className="stat-value">{pumpings === undefined ? "…" : `${todayTotal} ml`}</span>
           <span className="stat-label">pumped today</span>
         </div>
         <div className="stat">
-          <span className="stat-value">{todayMinutes} min</span>
+          <span className="stat-value">
+            {pumpings === undefined ? "…" : `${todayMinutes} min`}
+          </span>
           <span className="stat-label">pumping today</span>
         </div>
         <div className="stat">
@@ -571,8 +604,17 @@ function PumpingTab({ pumpings }: { pumpings: Array<PumpingView> }) {
 
       <WorkflowStatus result={deleteResult} />
 
+      {AsyncResult.matchWithWaiting(result, {
+        onWaiting: () => null,
+        onSuccess: () => null,
+        onError: (error) => <p className="error">{error.message}</p>,
+        onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+      })}
+
       <section className="history">
-        {days.length === 0 ? (
+        {pumpings === undefined ? (
+          <p className="empty">Loading…</p>
+        ) : days.length === 0 ? (
           <p className="empty">No pumping sessions logged yet — add the first one above. 🥛</p>
         ) : (
           days.map((day) => (

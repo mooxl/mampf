@@ -4,6 +4,8 @@ import {
   addPumpingWorkflow,
   deleteFeedingWorkflow,
   deletePumpingWorkflow,
+  listFeedingsWorkflow,
+  listPumpingsWorkflow,
   loginWorkflow,
   logoutWorkflow,
 } from "./workflows";
@@ -37,3 +39,22 @@ export const addPumpingAtom = Atom.fn(
 );
 
 export const deletePumpingAtom = Atom.fn((id: string) => deletePumpingWorkflow(id));
+
+/**
+ * Query atoms: each runs its list workflow and exposes the result as an
+ * `AsyncResult`. `Atom.swr` adds stale-while-revalidate — reads within
+ * `staleTime` reuse the cached value, and the lists refetch whenever the
+ * browser tab regains focus.
+ *
+ * `windowFocusSignal` is browser-only (it reads `window`/`document`), so it is
+ * omitted during SSR; focus revalidation is a client-only concern.
+ */
+const swrOptions = {
+  staleTime: "30 seconds",
+  revalidateOnFocus: typeof window === "undefined" ? undefined : ("always" as const),
+  focusSignal: typeof window === "undefined" ? undefined : Atom.windowFocusSignal,
+} as const;
+
+export const feedingsAtom = Atom.make(listFeedingsWorkflow()).pipe(Atom.swr(swrOptions));
+
+export const pumpingsAtom = Atom.make(listPumpingsWorkflow()).pipe(Atom.swr(swrOptions));

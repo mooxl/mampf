@@ -9,8 +9,6 @@ import {
   login,
   logout,
 } from "../server/api";
-import type { FeedingView } from "../server/feedings";
-import type { PumpingView } from "../server/pumpings";
 import type { ApiErrorData, ApiResult } from "../shared/api";
 
 /**
@@ -61,18 +59,10 @@ export const addPumpingWorkflow = (input: {
 export const deletePumpingWorkflow = (id: string) =>
   call((signal) => deletePumping({ data: { id }, signal }));
 
-// --- Loader helpers (plain data for the route loader, not atoms) -------------
+// --- Query workflows (read by the query atoms in `src/client/atoms.ts`) ------
 
-/** Load recent feedings for a signed-in visitor. */
-export async function loadFeedings(): Promise<Array<FeedingView>> {
-  const envelope = await listFeedings();
-  if (envelope._tag === "Err") throw new Error(envelope.error.message);
-  return envelope.value as Array<FeedingView>;
-}
+/** List recent feedings for a signed-in visitor. */
+export const listFeedingsWorkflow = () => call((signal) => listFeedings({ signal }));
 
-/** Load recent pumping sessions for a signed-in visitor. */
-export async function loadPumpings(): Promise<Array<PumpingView>> {
-  const envelope = await listPumpings();
-  if (envelope._tag === "Err") throw new Error(envelope.error.message);
-  return envelope.value as Array<PumpingView>;
-}
+/** List recent pumping sessions for a signed-in visitor. */
+export const listPumpingsWorkflow = () => call((signal) => listPumpings({ signal }));
