@@ -18,6 +18,7 @@
 
 body {
   margin: 0;
+  touch-action: manipulation;
   background: var(--bg);
   color: var(--ink);
   font-family:
