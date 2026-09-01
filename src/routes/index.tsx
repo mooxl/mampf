@@ -12,6 +12,7 @@ import {
   logoutAtom,
   pumpingsAtom,
 } from "../client/atoms";
+import { loadFeedings, loadPumpings } from "../client/workflows";
 import { isAuthed } from "../server/api";
 import type { ApiErrorData } from "../shared/api";
 import type { FeedingView } from "../server/feedings";
@@ -32,15 +33,33 @@ export const Route = createFileRoute("/")({
       throw redirect({ to: "/pin" });
     }
   },
+  // Fetches initial list data so the server render (and blocking client
+  // navigations) can paint real content. The data is only a seed — after
+  // hydration the query atoms below own all fetching and revalidation.
+  loader: async () => ({
+    feedings: await loadFeedings(),
+    pumpings: await loadPumpings(),
+  }),
   // A per-request Atom registry keeps the query/mutation atoms request-safe
-  // during SSR. The lists are query atoms (`src/client/atoms.ts`) that fetch
-  // on mount and refetch on tab focus via `Atom.swr`.
-  component: () => (
-    <RegistryProvider>
+  // during SSR. The loader data seeds the query atoms, so the first paint has
+  // data; `Atom.swr` then handles focus revalidation and staleness.
+  component: IndexPage,
+});
+
+function IndexPage() {
+  const { feedings, pumpings } = Route.useLoaderData();
+  const seededAt = Date.now();
+  return (
+    <RegistryProvider
+      initialValues={[
+        [feedingsAtom, AsyncResult.success(feedings, { timestamp: seededAt })],
+        [pumpingsAtom, AsyncResult.success(pumpings, { timestamp: seededAt })],
+      ]}
+    >
       <Tracker />
     </RegistryProvider>
-  ),
-});
+  );
+}
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
 function toLocalInputValue(date: Date): string {

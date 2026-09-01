@@ -9,6 +9,8 @@ import {
   login,
   logout,
 } from "../server/api";
+import type { FeedingView } from "../server/feedings";
+import type { PumpingView } from "../server/pumpings";
 import type { ApiErrorData, ApiResult } from "../shared/api";
 
 /**
@@ -66,3 +68,23 @@ export const listFeedingsWorkflow = () => call((signal) => listFeedings({ signal
 
 /** List recent pumping sessions for a signed-in visitor. */
 export const listPumpingsWorkflow = () => call((signal) => listPumpings({ signal }));
+
+// --- Route-loader helpers (seed the query atoms' initial values) --------------
+
+/**
+ * Load recent feedings for a signed-in visitor. Only used by the index route's
+ * loader so the server render (and blocking client navigations) start the
+ * query atoms with real data instead of an empty registry.
+ */
+export async function loadFeedings(): Promise<Array<FeedingView>> {
+  const envelope = await listFeedings();
+  if (envelope._tag === "Err") throw new Error(envelope.error.message);
+  return envelope.value as Array<FeedingView>;
+}
+
+/** Load recent pumping sessions for a signed-in visitor (see `loadFeedings`). */
+export async function loadPumpings(): Promise<Array<PumpingView>> {
+  const envelope = await listPumpings();
+  if (envelope._tag === "Err") throw new Error(envelope.error.message);
+  return envelope.value as Array<PumpingView>;
+}
