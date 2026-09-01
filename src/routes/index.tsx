@@ -2,7 +2,7 @@ import { RegistryProvider, useAtom } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { useState } from "react";
+import { Schema } from "effect";
 import {
   addFeedingAtom,
   addPumpingAtom,
@@ -17,6 +17,14 @@ import type { FeedingView } from "../server/feedings";
 import type { PumpSide, PumpingView } from "../server/pumpings";
 
 export const Route = createFileRoute("/")({
+  // The active tab lives in the URL (?tab=pumping) so links are shareable and
+  // it survives a reload. Validated with an Effect schema; an invalid value is
+  // overridden with undefined so the default tab applies. (Router merges the
+  // validated search over the raw one, so the key must be reset explicitly.)
+  validateSearch: (search: Record<string, unknown>): TabSearch => {
+    const result = Schema.decodeUnknownResult(tabSearchSchema)(search);
+    return result._tag === "Success" ? result.success : { tab: undefined };
+  },
   // The redirect is a UX gate; every server function still enforces auth.
   beforeLoad: async () => {
     if (!(await isAuthed())) {
@@ -129,7 +137,16 @@ function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, A
   });
 }
 
-type Tab = "feeding" | "pumping";
+const TABS = ["feeding", "pumping"] as const;
+
+type Tab = (typeof TABS)[number];
+
+/** Search params for the index route: `?tab=pumping`. */
+const tabSearchSchema = Schema.Struct({
+  tab: Schema.optional(Schema.Literals(TABS)),
+});
+
+type TabSearch = Schema.Schema.Type<typeof tabSearchSchema>;
 
 function Tracker({
   feedings,
@@ -140,7 +157,11 @@ function Tracker({
 }) {
   const router = useRouter();
   const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
-  const [tab, setTab] = useState<Tab>("feeding");
+  const { tab: tabParam } = Route.useSearch();
+  const tab: Tab = tabParam ?? "feeding";
+  const setTab = (tab: Tab) => {
+    void router.navigate({ to: ".", search: { tab } });
+  };
 
   return (
     <main className="page">

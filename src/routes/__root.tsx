@@ -1,6 +1,6 @@
 import { HeadContent, Outlet, Scripts, createRootRoute, useRouter } from "@tanstack/react-router";
 import type { ErrorComponentProps } from "@tanstack/react-router";
-import { useState } from "react";
+import { useTransition } from "react";
 import styles from "../styles.css?url";
 
 export const Route = createRootRoute({
@@ -37,7 +37,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
  */
 function RouteError({ error, reset }: ErrorComponentProps) {
   const router = useRouter();
-  const [retrying, setRetrying] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
   const message =
     error instanceof Error && error.message
@@ -45,9 +45,11 @@ function RouteError({ error, reset }: ErrorComponentProps) {
       : "Something went wrong while loading Mampf.";
 
   const retry = () => {
-    setRetrying(true);
     // Re-run the loaders, then clear the error boundary so the route re-renders.
-    void router.invalidate().then(() => reset());
+    startTransition(async () => {
+      await router.invalidate();
+      reset();
+    });
   };
 
   return (
@@ -56,8 +58,8 @@ function RouteError({ error, reset }: ErrorComponentProps) {
         <span className="pin-logo">🍼</span>
         <h1>Mampf</h1>
         <p className="error">{message}</p>
-        <button className="primary" type="button" onClick={retry} disabled={retrying}>
-          {retrying ? "Retrying…" : "Try again"}
+        <button className="primary" type="button" onClick={retry} disabled={isPending}>
+          {isPending ? "Retrying…" : "Try again"}
         </button>
       </div>
     </main>
