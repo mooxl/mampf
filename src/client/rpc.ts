@@ -16,20 +16,31 @@ import { getSsrRequest } from "../shared/ssr-bridge";
 class MampfApi extends AtomRpc.Service<MampfApi>()("mampf/MampfApi", {
   group: MampfRpc,
   // Built per atom, per registry: during SSR the atom registry is per request,
-  // so the layer captures that request's origin and cookie and dispatches a
-  // real RPC call back into the worker. In the browser this is a plain
-  // same-origin `/rpc` call.
+  // so the layer captures that request's cookie and RPC dispatcher. In the
+  // browser this is a plain same-origin `/rpc` call.
   protocol: () => {
     const ssr = getSsrRequest();
-    return RpcClient.layerProtocolHttp({
-      url: ssr ? `${ssr.origin}/rpc` : "/rpc",
-      ...(ssr
-        ? {
-            transformClient: <E, R>(client: HttpClientModule.HttpClient.With<E, R>) =>
-              client.pipe(HttpClient.mapRequest(HttpClientRequest.setHeader("cookie", ssr.cookie))),
-          }
-        : {}),
-    }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcSerialization.layerJson));
+    const transformClient = ssr
+      ? {
+          transformClient: <E, R>(client: HttpClientModule.HttpClient.With<E, R>) =>
+            client.pipe(HttpClient.mapRequest(HttpClientRequest.setHeader("cookie", ssr.cookie))),
+        }
+      : {};
+    const layer = RpcClient.layerProtocolHttp({ url: "/rpc", ...transformClient }).pipe(
+      Layer.provide(FetchHttpClient.layer),
+      Layer.provide(RpcSerialization.layerJson),
+    );
+    if (!ssr) return layer;
+    // During SSR, dispatch RPC requests to the in-process handler instead of
+    // the network: the response is exactly what this worker would produce,
+    // and edge routing (redirects, HTML error pages) can never corrupt it.
+    return layer.pipe(
+      Layer.provide(
+        Layer.succeed(FetchHttpClient.Fetch, (_input, init) =>
+          ssr.rpc(new Request("http://ssr/rpc", init)),
+        ),
+      ),
+    );
   },
 }) {}
 

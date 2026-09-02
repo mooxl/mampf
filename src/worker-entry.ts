@@ -20,8 +20,14 @@ export default {
     if (url.pathname === "/rpc") {
       return rpcWebHandler(request);
     }
-    return ssrStorage.run({ origin: url.origin, cookie: request.headers.get("cookie") ?? "" }, () =>
-      handleStart(request),
+    return ssrStorage.run(
+      {
+        cookie: request.headers.get("cookie") ?? "",
+        // SSR query atoms call the RPC handler in-process — no network
+        // self-fetch, so edge routing can never touch the response.
+        rpc: rpcWebHandler,
+      },
+      () => handleStart(request),
     );
   },
 };

@@ -3,14 +3,15 @@
  *
  * The worker entry stores an `AsyncLocalStorage` under a well-known key
  * (see `src/worker-entry.ts`). During server rendering, the RPC client reads
- * the current request's origin and cookie from it, so query atoms execute
- * against the RPC server with the visitor's session — without importing any
- * server-only module into the client bundle. In the browser this is always
- * `undefined` and the client talks to `/rpc` directly.
+ * the current request's cookie and RPC dispatcher from it, so query atoms
+ * execute with the visitor's session — without importing any server-only
+ * module into the client bundle. In the browser this is always `undefined`
+ * and the client talks to `/rpc` directly.
  */
 export interface SsrRequest {
-  readonly origin: string;
   readonly cookie: string;
+  /** Runs the RPC handler in-process for the rendering request. */
+  readonly rpc: (request: Request) => Promise<Response>;
 }
 
 export interface SsrStorage {
