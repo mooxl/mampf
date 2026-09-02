@@ -1,26 +1,30 @@
-import { useAtom, useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
-import { Link, createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { DateTime, Exit, Option, Schema } from "effect";
-import { AsyncResult } from "effect/unstable/reactivity";
-import type { ReactNode } from "react";
-import { MampfApi, ResultError, feedingsAtom, pumpingsAtom } from "../client/rpc";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { DateTime, Option, Schema } from "effect";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import {
+  addFeedingAtom,
+  addPumpingAtom,
+  deleteFeedingAtom,
+  deletePumpingAtom,
+  feedingsAtom,
+  logoutAtom,
+  pumpingsAtom,
+} from "../client/rpc";
+import { ResultError, type RpcError } from "../client/rpc";
 import { isAuthed } from "../server/api";
-import type { PumpSide } from "../shared/api";
-
-const Tab = Schema.Literals(["feeding", "pumping"]);
-const TAB_LABELS = { feeding: "🍼 Feeding", pumping: "🥛 Pumping" } satisfies Record<
-  typeof Tab.Type,
-  string
->;
+import type { FeedingView, PumpSide, PumpingView } from "../shared/domain";
 
 export const Route = createFileRoute("/")({
-  // The active tab lives in the URL (?tab=pumping) so links are shareable.
-  // Unknown values fall back to the default tab instead of erroring. The key
-  // must be present (even as undefined) to override the raw parent search.
-  validateSearch: (search: Record<string, unknown>): { tab?: typeof Tab.Type } => ({
-    tab: Schema.is(Tab)(search.tab) ? search.tab : undefined,
-  }),
+  // The active tab lives in the URL (?tab=pumping) so links are shareable and
+  // it survives a reload. Validated with an Effect schema; an invalid value is
+  // overridden with undefined so the default tab applies. (Router merges the
+  // validated search over the raw one, so the key must be reset explicitly.)
+  validateSearch: (search: Record<string, unknown>): TabSearch => {
+    const result = Schema.decodeUnknownResult(tabSearchSchema)(search);
+    return result._tag === "Success" ? result.success : { tab: undefined };
+  },
   // The redirect is a UX gate; every RPC still enforces auth.
   beforeLoad: async () => {
     if (!(await isAuthed())) {
@@ -36,13 +40,105 @@ export const Route = createFileRoute("/")({
   component: Tracker,
 });
 
+/** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
+function toLocalInputValue(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+  );
+}
+
+interface DayGroup<T> {
+  readonly key: string;
+  readonly label: string;
+  entries: Array<T>;
+  totalMl: number;
+}
+
+interface EntryBase {
+  readonly id: string;
+  readonly amountMl: number;
+}
+
+function groupByDay<T extends EntryBase>(
+  entries: ReadonlyArray<T>,
+  at: (entry: T) => string,
+): Array<DayGroup<T>> {
+  const days = new Map<string, DayGroup<T>>();
+  const dayFormatter = new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+  });
+
+  for (const entry of entries) {
+    const date = new Date(at(entry));
+    const key = toLocalInputValue(date).slice(0, 10);
+    const today = toLocalInputValue(new Date()).slice(0, 10);
+    const yesterday = toLocalInputValue(new Date(Date.now() - 24 * 60 * 60 * 1000)).slice(0, 10);
+    const label =
+      key === today ? "Today" : key === yesterday ? "Yesterday" : dayFormatter.format(date);
+
+    let group = days.get(key);
+    if (!group) {
+      group = { key, label, entries: [], totalMl: 0 };
+      days.set(key, group);
+    }
+    group.entries.push(entry);
+    group.totalMl = group.totalMl + entry.amountMl;
+  }
+
+  return [...days.values()].sort((a, b) => b.key.localeCompare(a.key));
+}
+
+function formatTime(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
+function timeAgo(iso: string): string {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 24) return rest > 0 ? `${hours} h ${rest} min ago` : `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days} d ago`;
+}
+
+const SIDE_LABELS: Record<PumpSide, string> = {
+  left: "Left",
+  right: "Right",
+  both: "Both",
+};
+
+const TABS = ["feeding", "pumping"] as const;
+
+type Tab = (typeof TABS)[number];
+
+/** Search params for the index route: `?tab=pumping`. */
+const tabSearchSchema = Schema.Struct({
+  tab: Schema.optional(Schema.Literals(TABS)),
+});
+
+type TabSearch = Schema.Schema.Type<typeof tabSearchSchema>;
+
 function Tracker() {
   const router = useRouter();
-  const logout = useAtomSet(MampfApi.mutation("Logout"), { mode: "promiseExit" });
-  const { tab = "feeding" } = Route.useSearch();
-  // Keep the hidden tab's list mounted so it stays warm and revalidates on focus.
-  useAtomMount(feedingsAtom);
-  useAtomMount(pumpingsAtom);
+  const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
+  // Both query atoms stay mounted so the hidden tab's data stays warm and
+  // participates in focus revalidation.
+  const feedings = useAtomValue(feedingsAtom);
+  const pumpings = useAtomValue(pumpingsAtom);
+  const { tab: tabParam } = Route.useSearch();
+  const tab: Tab = tabParam ?? "feeding";
+  const setTab = (tab: Tab) => {
+    void router.navigate({ to: ".", search: { tab } });
+  };
 
   return (
     <main className="page">
@@ -51,162 +147,303 @@ function Tracker() {
         <button
           type="button"
           className="signout"
-          onClick={() =>
-            void logout({ payload: undefined }).then((exit) => {
-              if (Exit.isSuccess(exit)) void router.invalidate();
-            })
-          }
+          aria-label="Sign out"
+          onClick={() => {
+            void runLogout({ payload: undefined }).then((exit) => {
+              if (exit._tag === "Success") void router.invalidate();
+            });
+          }}
         >
           Sign out
         </button>
       </header>
 
       <nav className="tabs" role="tablist" aria-label="Tracker sections">
-        {Tab.literals.map((t) => (
-          <Link
-            key={t}
-            to="/"
-            search={{ tab: t }}
-            role="tab"
-            aria-selected={tab === t}
-            className={tab === t ? "tab active" : "tab"}
-          >
-            {TAB_LABELS[t]}
-          </Link>
-        ))}
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "feeding"}
+          className={tab === "feeding" ? "tab active" : "tab"}
+          onClick={() => setTab("feeding")}
+        >
+          🍼 Feeding
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tab === "pumping"}
+          className={tab === "pumping" ? "tab active" : "tab"}
+          onClick={() => setTab("pumping")}
+        >
+          🥛 Pumping
+        </button>
       </nav>
 
-      {tab === "feeding" ? <FeedingTab /> : <PumpingTab />}
+      {tab === "feeding" ? <FeedingTab result={feedings} /> : <PumpingTab result={pumpings} />}
     </main>
   );
 }
 
-function FeedingTab() {
-  const result = useAtomValue(feedingsAtom);
-  const [addResult, add] = useAtom(MampfApi.mutation("AddFeeding"), { mode: "promiseExit" });
-  const [deleteResult, remove] = useAtom(MampfApi.mutation("DeleteFeeding"), {
-    mode: "promiseExit",
-  });
+/** Option values 5..max in steps of 5, for the amount/duration selects. */
+const step5Options = (max: number) =>
+  Array.from({ length: Math.floor(max / 5) }, (_, i) => (i + 1) * 5);
 
-  const defaults = () => ({ amountMl: 90, fedAt: nowLocal() });
+function FeedingTab({
+  result,
+}: {
+  result: AsyncResult.AsyncResult<ReadonlyArray<FeedingView>, RpcError>;
+}) {
+  const refreshFeedings = useAtomRefresh(feedingsAtom);
+  const [addResult, runAdd] = useAtom(addFeedingAtom, { mode: "promiseExit" });
+  const [deleteResult, runDelete] = useAtom(deleteFeedingAtom, { mode: "promiseExit" });
+  const busy = addResult.waiting || deleteResult.waiting;
+
   const form = useForm({
-    defaultValues: defaults(),
-    onSubmit: async ({ value }) => {
-      const exit = await add({
-        payload: { amountMl: value.amountMl, fedAt: DateTime.makeUnsafe(value.fedAt) },
+    defaultValues: {
+      amount: "90",
+      fedAt: toLocalInputValue(new Date()),
+    },
+    onSubmit: ({ value }) => {
+      void runAdd({
+        payload: {
+          amountMl: Math.round(Number(value.amount)),
+          // `new Date(...)` interprets the datetime-local value in the user's
+          // timezone; we store the instant as UTC ISO.
+          fedAt: DateTime.fromDateUnsafe(new Date(value.fedAt)),
+        },
         reactivityKeys: ["feedings"],
+      }).then((exit) => {
+        if (exit._tag === "Success") {
+          // Reset the whole form (defaults + cleared validation) and bump the
+          // time field to "now" for the next entry.
+          form.reset();
+          form.setFieldValue("fedAt", toLocalInputValue(new Date()));
+          refreshFeedings();
+        }
       });
-      if (Exit.isSuccess(exit)) form.reset(defaults());
     },
   });
 
+  const isSubmitting = addResult.waiting;
+
+  // `AsyncResult.value` keeps the previous success visible while a refresh is
+  // in flight or has failed (stale-while-revalidate): `undefined` only before
+  // the first fetch arrives.
   const feedings = Option.getOrUndefined(AsyncResult.value(result));
-  const days = feedings && groupByDay(feedings, (f) => f.fedAt);
-  const today = days?.find((d) => d.key === dayKey(DateTime.nowUnsafe()));
-  const last = feedings?.[0];
+  const days = groupByDay(feedings ?? [], (f) => f.fedAt);
+  const todayKey = toLocalInputValue(new Date()).slice(0, 10);
+  const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
+  const lastFeeding = feedings?.[0];
+
+  const remove = (id: string) => {
+    void runDelete({ payload: { id }, reactivityKeys: ["feedings"] }).then((exit) => {
+      if (exit._tag === "Success") refreshFeedings();
+    });
+  };
 
   return (
     <>
       <section className="stats">
-        <Stat value={feedings && `${today?.totalMl ?? 0} ml`} label="today" />
-        <Stat value={feedings && (last ? timeAgo(last.fedAt) : "—")} label="last feed" />
-        <Stat value={feedings?.length} label="entries (7 d)" />
+        <div className="stat">
+          <span className="stat-value">{feedings === undefined ? "…" : `${todayTotal} ml`}</span>
+          <span className="stat-label">today</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{lastFeeding ? timeAgo(lastFeeding.fedAt) : "—"}</span>
+          <span className="stat-label">last feed</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{feedings?.length ?? "…"}</span>
+          <span className="stat-label">entries (7 d)</span>
+        </div>
       </section>
 
-      <form className="card form" onSubmit={submit(form)}>
+      <form
+        className="card form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          form.handleSubmit();
+        }}
+      >
         <div className="form-row">
           <form.Field
-            name="amountMl"
+            name="amount"
             children={(field) => (
-              <Select
-                label="Amount (ml)"
-                unit="ml"
-                max={1000}
-                value={field.state.value}
-                onChange={field.handleChange}
-              />
+              <label className="field">
+                <span>Amount (ml)</span>
+                <select
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                >
+                  {step5Options(1000).map((ml) => (
+                    <option key={ml} value={String(ml)}>
+                      {ml} ml
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           />
           <form.Field
             name="fedAt"
+            validators={{
+              onChange: ({ value }) => (value ? undefined : "Please pick a time."),
+            }}
             children={(field) => (
-              <TimeField value={field.state.value} onChange={field.handleChange} />
+              <label className="field">
+                <span>Time</span>
+                <input
+                  type="datetime-local"
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                />
+                {field.state.meta.errors.length > 0 && (
+                  <span className="error">{field.state.meta.errors.join(", ")}</span>
+                )}
+              </label>
             )}
           />
         </div>
+
         <ResultError result={addResult} />
-        <button className="primary" type="submit" disabled={addResult.waiting}>
-          {addResult.waiting ? "Saving…" : "Add feeding"}
+
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Add feeding"}
         </button>
       </form>
 
       <ResultError result={deleteResult} />
+
       <ResultError result={result} />
 
-      <History
-        days={days}
-        empty="No feedings logged yet — add the first one above. 🍼"
-        at={(f) => f.fedAt}
-        busy={deleteResult.waiting}
-        onDelete={(id) => void remove({ payload: { id }, reactivityKeys: ["feedings"] })}
-      />
+      <section className="history">
+        {feedings === undefined ? (
+          <p className="empty">Loading…</p>
+        ) : days.length === 0 ? (
+          <p className="empty">No feedings logged yet — add the first one above. 🍼</p>
+        ) : (
+          days.map((day) => (
+            <div key={day.key} className="card day">
+              <div className="day-header">
+                <h2>{day.label}</h2>
+                <span className="day-total">
+                  {day.entries.length} · {day.totalMl} ml
+                </span>
+              </div>
+              <ul>
+                {day.entries.map((entry) => (
+                  <li key={entry.id}>
+                    <span className="entry-time">{formatTime(entry.fedAt)}</span>
+                    <span className="entry-amount">{entry.amountMl} ml</span>
+                    <button
+                      type="button"
+                      className="delete"
+                      aria-label={`Delete feeding at ${formatTime(entry.fedAt)}`}
+                      disabled={busy}
+                      onClick={() => remove(entry.id)}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </section>
     </>
   );
 }
 
-const SIDES: ReadonlyArray<readonly [PumpSide, string]> = [
-  ["left", "Left"],
-  ["both", "Both"],
-  ["right", "Right"],
-];
-const sideLabel = (side: PumpSide) => SIDES.find(([s]) => s === side)?.[1];
+function PumpingTab({
+  result,
+}: {
+  result: AsyncResult.AsyncResult<ReadonlyArray<PumpingView>, RpcError>;
+}) {
+  const refreshPumpings = useAtomRefresh(pumpingsAtom);
+  const [addResult, runAdd] = useAtom(addPumpingAtom, { mode: "promiseExit" });
+  const [deleteResult, runDelete] = useAtom(deletePumpingAtom, { mode: "promiseExit" });
+  const busy = addResult.waiting || deleteResult.waiting;
 
-function PumpingTab() {
-  const result = useAtomValue(pumpingsAtom);
-  const [addResult, add] = useAtom(MampfApi.mutation("AddPumping"), { mode: "promiseExit" });
-  const [deleteResult, remove] = useAtom(MampfApi.mutation("DeletePumping"), {
-    mode: "promiseExit",
-  });
-
-  const defaults = () => ({
-    side: "both" as PumpSide,
-    durationMin: 15,
-    amountMl: 60,
-    pumpedAt: nowLocal(),
-  });
   const form = useForm({
-    defaultValues: defaults(),
-    onSubmit: async ({ value }) => {
-      const exit = await add({
-        payload: { ...value, pumpedAt: DateTime.makeUnsafe(value.pumpedAt) },
+    defaultValues: {
+      side: "both" as PumpSide,
+      duration: "15",
+      amount: "60",
+      pumpedAt: toLocalInputValue(new Date()),
+    },
+    onSubmit: ({ value }) => {
+      void runAdd({
+        payload: {
+          side: value.side,
+          durationMin: Math.round(Number(value.duration)),
+          amountMl: Math.round(Number(value.amount)),
+          pumpedAt: DateTime.fromDateUnsafe(new Date(value.pumpedAt)),
+        },
         reactivityKeys: ["pumpings"],
+      }).then((exit) => {
+        if (exit._tag === "Success") {
+          // Reset the whole form (defaults + cleared validation) and bump the
+          // time field to "now" for the next entry.
+          form.reset();
+          form.setFieldValue("pumpedAt", toLocalInputValue(new Date()));
+          refreshPumpings();
+        }
       });
-      if (Exit.isSuccess(exit)) form.reset(defaults());
     },
   });
 
+  const isSubmitting = addResult.waiting;
+
   const pumpings = Option.getOrUndefined(AsyncResult.value(result));
-  const days = pumpings && groupByDay(pumpings, (p) => p.pumpedAt);
-  const today = days?.find((d) => d.key === dayKey(DateTime.nowUnsafe()));
+  const days = groupByDay(pumpings ?? [], (p) => p.pumpedAt);
+  const todayKey = toLocalInputValue(new Date()).slice(0, 10);
+  const today = days.find((d) => d.key === todayKey);
+  const todayTotal = today?.totalMl ?? 0;
   const todayMinutes = today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0;
-  const last = pumpings?.[0];
+  const lastPumping = pumpings?.[0];
+
+  const remove = (id: string) => {
+    void runDelete({ payload: { id }, reactivityKeys: ["pumpings"] }).then((exit) => {
+      if (exit._tag === "Success") refreshPumpings();
+    });
+  };
 
   return (
     <>
       <section className="stats">
-        <Stat value={pumpings && `${today?.totalMl ?? 0} ml`} label="pumped today" />
-        <Stat value={pumpings && `${todayMinutes} min`} label="pumping today" />
-        <Stat value={pumpings && (last ? timeAgo(last.pumpedAt) : "—")} label="last pump" />
+        <div className="stat">
+          <span className="stat-value">{pumpings === undefined ? "…" : `${todayTotal} ml`}</span>
+          <span className="stat-label">pumped today</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{pumpings === undefined ? "…" : `${todayMinutes} min`}</span>
+          <span className="stat-label">pumping today</span>
+        </div>
+        <div className="stat">
+          <span className="stat-value">{lastPumping ? timeAgo(lastPumping.pumpedAt) : "—"}</span>
+          <span className="stat-label">last pump</span>
+        </div>
       </section>
 
-      <form className="card form" onSubmit={submit(form)}>
+      <form
+        className="card form"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          form.handleSubmit();
+        }}
+      >
         <form.Field
           name="side"
           children={(field) => (
             <div className="field">
               <span>Side</span>
               <div className="segmented" role="radiogroup" aria-label="Pumping side">
-                {SIDES.map(([side, label]) => (
+                {(["left", "both", "right"] as const).map((side) => (
                   <button
                     key={side}
                     type="button"
@@ -215,229 +452,124 @@ function PumpingTab() {
                     className={field.state.value === side ? "active" : ""}
                     onClick={() => field.handleChange(side)}
                   >
-                    {label}
+                    {SIDE_LABELS[side]}
                   </button>
                 ))}
               </div>
             </div>
           )}
         />
+
         <div className="form-row">
           <form.Field
-            name="durationMin"
+            name="duration"
             children={(field) => (
-              <Select
-                label="Duration (min)"
-                unit="min"
-                max={60}
-                value={field.state.value}
-                onChange={field.handleChange}
-              />
+              <label className="field">
+                <span>Duration (min)</span>
+                <select
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                >
+                  {step5Options(60).map((min) => (
+                    <option key={min} value={String(min)}>
+                      {min} min
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           />
           <form.Field
-            name="amountMl"
+            name="amount"
             children={(field) => (
-              <Select
-                label="Amount (ml)"
-                unit="ml"
-                max={1000}
-                value={field.state.value}
-                onChange={field.handleChange}
-              />
+              <label className="field">
+                <span>Amount (ml)</span>
+                <select
+                  value={field.state.value}
+                  onChange={(e) => field.handleChange(e.target.value)}
+                >
+                  {step5Options(1000).map((ml) => (
+                    <option key={ml} value={String(ml)}>
+                      {ml} ml
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
           />
         </div>
+
         <form.Field
           name="pumpedAt"
+          validators={{
+            onChange: ({ value }) => (value ? undefined : "Please pick a time."),
+          }}
           children={(field) => (
-            <TimeField value={field.state.value} onChange={field.handleChange} />
+            <label className="field">
+              <span>Time</span>
+              <input
+                type="datetime-local"
+                value={field.state.value}
+                onChange={(e) => field.handleChange(e.target.value)}
+              />
+              {field.state.meta.errors.length > 0 && (
+                <span className="error">{field.state.meta.errors.join(", ")}</span>
+              )}
+            </label>
           )}
         />
+
         <ResultError result={addResult} />
-        <button className="primary" type="submit" disabled={addResult.waiting}>
-          {addResult.waiting ? "Saving…" : "Add pumping session"}
+
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Saving…" : "Add pumping session"}
         </button>
       </form>
 
       <ResultError result={deleteResult} />
+
       <ResultError result={result} />
 
-      <History
-        days={days}
-        empty="No pumping sessions logged yet — add the first one above. 🥛"
-        at={(p) => p.pumpedAt}
-        detail={(p) => `${sideLabel(p.side)} · ${p.durationMin} min`}
-        busy={deleteResult.waiting}
-        onDelete={(id) => void remove({ payload: { id }, reactivityKeys: ["pumpings"] })}
-      />
+      <section className="history">
+        {pumpings === undefined ? (
+          <p className="empty">Loading…</p>
+        ) : days.length === 0 ? (
+          <p className="empty">No pumping sessions logged yet — add the first one above. 🥛</p>
+        ) : (
+          days.map((day) => (
+            <div key={day.key} className="card day">
+              <div className="day-header">
+                <h2>{day.label}</h2>
+                <span className="day-total">
+                  {day.entries.length} · {day.totalMl} ml
+                </span>
+              </div>
+              <ul>
+                {day.entries.map((entry) => (
+                  <li key={entry.id}>
+                    <span className="entry-time">{formatTime(entry.pumpedAt)}</span>
+                    <span className="entry-amount">
+                      {entry.amountMl} ml
+                      <span className="entry-detail">
+                        {SIDE_LABELS[entry.side]} · {entry.durationMin} min
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      className="delete"
+                      aria-label={`Delete pumping session at ${formatTime(entry.pumpedAt)}`}
+                      disabled={busy}
+                      onClick={() => remove(entry.id)}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        )}
+      </section>
     </>
   );
-}
-
-// --- Shared UI ---------------------------------------------------------------
-
-/** Hand the (browser-validated) submit event to TanStack Form. */
-const submit = (form: { handleSubmit: () => Promise<void> }) => (e: React.FormEvent) => {
-  e.preventDefault();
-  void form.handleSubmit();
-};
-
-function Stat({ value, label }: { value: ReactNode | undefined; label: string }) {
-  return (
-    <div className="stat">
-      <span className="stat-value">{value ?? "…"}</span>
-      <span className="stat-label">{label}</span>
-    </div>
-  );
-}
-
-/** Options 5..max in steps of 5. */
-function Select(props: {
-  label: string;
-  unit: string;
-  max: number;
-  value: number;
-  onChange: (value: number) => void;
-}) {
-  return (
-    <label className="field">
-      <span>{props.label}</span>
-      <select value={props.value} onChange={(e) => props.onChange(Number(e.target.value))}>
-        {Array.from({ length: props.max / 5 }, (_, i) => (i + 1) * 5).map((n) => (
-          <option key={n} value={n}>
-            {n} {props.unit}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function TimeField(props: { value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="field">
-      <span>Time</span>
-      <input
-        type="datetime-local"
-        required
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-function History<T extends { readonly id: string; readonly amountMl: number }>(props: {
-  days: ReadonlyArray<Day<T>> | undefined;
-  empty: string;
-  at: (entry: T) => DateTime.Utc;
-  detail?: (entry: T) => ReactNode;
-  busy: boolean;
-  onDelete: (id: T["id"]) => void;
-}) {
-  if (!props.days) return <p className="empty">Loading…</p>;
-  if (props.days.length === 0) return <p className="empty">{props.empty}</p>;
-  return (
-    <section className="history">
-      {props.days.map((day) => (
-        <div key={day.key} className="card day">
-          <div className="day-header">
-            <h2>{day.label}</h2>
-            <span className="day-total">
-              {day.entries.length} · {day.totalMl} ml
-            </span>
-          </div>
-          <ul>
-            {day.entries.map((entry) => (
-              <li key={entry.id}>
-                <span className="entry-time">{formatTime(props.at(entry))}</span>
-                <span className="entry-amount">
-                  {entry.amountMl} ml
-                  {props.detail && <span className="entry-detail">{props.detail(entry)}</span>}
-                </span>
-                <button
-                  type="button"
-                  className="delete"
-                  aria-label={`Delete entry at ${formatTime(props.at(entry))}`}
-                  disabled={props.busy}
-                  onClick={() => props.onDelete(entry.id)}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-// --- Local time helpers ------------------------------------------------------
-// Feedings are stored in UTC; the UI groups and displays them in the device's
-// local time zone, so both parents see "today" correctly on their own phones.
-
-/** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
-function toLocalInput(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
-    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
-  );
-}
-
-const nowLocal = () => toLocalInput(new Date());
-const dayKey = (at: DateTime.Utc) => toLocalInput(DateTime.toDate(at)).slice(0, 10);
-const formatTime = (at: DateTime.Utc) =>
-  DateTime.toDate(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-
-interface Day<T> {
-  readonly key: string;
-  readonly label: string;
-  readonly entries: Array<T>;
-  totalMl: number;
-}
-
-function groupByDay<T extends { readonly amountMl: number }>(
-  entries: ReadonlyArray<T>,
-  at: (entry: T) => DateTime.Utc,
-): Array<Day<T>> {
-  const now = DateTime.nowUnsafe();
-  const today = dayKey(now);
-  const yesterday = dayKey(DateTime.subtract(now, { days: 1 }));
-  const days = new Map<string, Day<T>>();
-  for (const entry of entries) {
-    const date = DateTime.toDate(at(entry));
-    const key = dayKey(at(entry));
-    const day = days.get(key) ?? {
-      key,
-      label:
-        key === today
-          ? "Today"
-          : key === yesterday
-            ? "Yesterday"
-            : date.toLocaleDateString(undefined, {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-              }),
-      entries: [],
-      totalMl: 0,
-    };
-    day.entries.push(entry);
-    day.totalMl += entry.amountMl;
-    days.set(key, day);
-  }
-  return [...days.values()].sort((a, b) => b.key.localeCompare(a.key));
-}
-
-function timeAgo(at: DateTime.Utc): string {
-  const minutes = Math.max(0, Math.round((Date.now() - DateTime.toEpochMillis(at)) / 60000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  if (hours < 24) return rest > 0 ? `${hours} h ${rest} min ago` : `${hours} h ago`;
-  return `${Math.floor(hours / 24)} d ago`;
 }

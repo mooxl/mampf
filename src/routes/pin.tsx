@@ -1,8 +1,7 @@
 import { useAtom } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { Exit } from "effect";
-import { MampfApi, ResultError } from "../client/rpc";
+import { ResultError, loginAtom } from "../client/rpc";
 import { isAuthed } from "../server/api";
 
 export const Route = createFileRoute("/pin")({
@@ -17,28 +16,36 @@ export const Route = createFileRoute("/pin")({
 
 function PinGate() {
   const router = useRouter();
-  const [loginResult, login] = useAtom(MampfApi.mutation("Login"), { mode: "promiseExit" });
+  const [loginResult, runLogin] = useAtom(loginAtom, { mode: "promiseExit" });
 
   const form = useForm({
     defaultValues: { pin: "" },
-    onSubmit: async ({ value }) => {
-      const exit = await login({ payload: value });
-      if (Exit.isSuccess(exit)) await router.navigate({ to: "/" });
+    onSubmit: ({ value }) => {
+      void runLogin({ payload: { pin: value.pin } }).then((exit) => {
+        if (exit._tag === "Success") void router.navigate({ to: "/" });
+      });
     },
   });
+
+  const isSubmitting = loginResult.waiting;
 
   return (
     <main className="page">
       <form
         className="card form pin-gate"
+        noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          void form.handleSubmit();
+          e.stopPropagation();
+          form.handleSubmit();
         }}
       >
         <h1>Mampf</h1>
         <form.Field
           name="pin"
+          validators={{
+            onChange: ({ value }) => (value ? undefined : "Enter the family PIN."),
+          }}
           children={(field) => (
             <label className="field">
               <span>Family PIN</span>
@@ -46,17 +53,19 @@ function PinGate() {
                 type="password"
                 inputMode="numeric"
                 autoComplete="current-password"
-                required
-                autoFocus
                 value={field.state.value}
                 onChange={(e) => field.handleChange(e.target.value)}
+                autoFocus
               />
+              {field.state.meta.errors.length > 0 && (
+                <span className="error">{field.state.meta.errors.join(", ")}</span>
+              )}
             </label>
           )}
         />
         <ResultError result={loginResult} />
-        <button className="primary" type="submit" disabled={loginResult.waiting}>
-          {loginResult.waiting ? "Checking…" : "Unlock"}
+        <button className="primary" type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Checking…" : "Unlock"}
         </button>
       </form>
     </main>

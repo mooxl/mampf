@@ -71,8 +71,6 @@ body {
   border-radius: 12px;
   padding: 10px;
   cursor: pointer;
-  text-align: center;
-  text-decoration: none;
 }
 
 .tab.active {
