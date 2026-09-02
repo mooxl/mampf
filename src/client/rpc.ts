@@ -8,6 +8,9 @@ import { Atom, AtomRpc } from "effect/unstable/reactivity";
 import { MampfRpc, NotAuthed, NotConfigured, WrongPin } from "../shared/api";
 import { getSsrRequest } from "../shared/ssr-bridge";
 
+/** Placeholder origin for SSR RPC requests; they are handled in-process. */
+const SSR_RPC_URL = "http://ssr/rpc";
+
 /**
  * The API as atoms: one `AtomRpc` service wires a typed RPC client to the
  * reactivity runtime, and query/mutation atoms are derived directly from the
@@ -26,19 +29,21 @@ class MampfApi extends AtomRpc.Service<MampfApi>()("mampf/MampfApi", {
             client.pipe(HttpClient.mapRequest(HttpClientRequest.setHeader("cookie", ssr.cookie))),
         }
       : {};
-    const layer = RpcClient.layerProtocolHttp({ url: "/rpc", ...transformClient }).pipe(
-      Layer.provide(FetchHttpClient.layer),
-      Layer.provide(RpcSerialization.layerJson),
-    );
+    // The URL must be absolute during SSR: `HttpClient` resolves it with
+    // `new URL(...)` before dispatching, and outside a browser a relative URL
+    // has no base and fails with `InvalidUrlError`. The host is a placeholder;
+    // the request never leaves the process (see the `Fetch` override below).
+    const layer = RpcClient.layerProtocolHttp({
+      url: ssr ? SSR_RPC_URL : "/rpc",
+      ...transformClient,
+    }).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(RpcSerialization.layerJson));
     if (!ssr) return layer;
     // During SSR, dispatch RPC requests to the in-process handler instead of
     // the network: the response is exactly what this worker would produce,
     // and edge routing (redirects, HTML error pages) can never corrupt it.
     return layer.pipe(
       Layer.provide(
-        Layer.succeed(FetchHttpClient.Fetch, (_input, init) =>
-          ssr.rpc(new Request("http://ssr/rpc", init)),
-        ),
+        Layer.succeed(FetchHttpClient.Fetch, (input, init) => ssr.rpc(new Request(input, init))),
       ),
     );
   },
