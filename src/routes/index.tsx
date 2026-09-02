@@ -1,9 +1,8 @@
-import { useAtom, useAtomRefresh, useAtomSuspense, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { DateTime, Option, Schema } from "effect";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { AtomHydration } from "../client/atom-hydration";
 import {
   addFeedingAtom,
   addPumpingAtom,
@@ -13,7 +12,7 @@ import {
   logoutAtom,
   pumpingsAtom,
 } from "../client/rpc";
-import { rpcErrorMessage, type RpcError } from "../client/rpc";
+import { ResultError, type RpcError } from "../client/rpc";
 import { isAuthed } from "../server/api";
 import type { FeedingView, PumpSide, PumpingView } from "../shared/domain";
 
@@ -32,17 +31,14 @@ export const Route = createFileRoute("/")({
       throw redirect({ to: "/pin" });
     }
   },
-  component: IndexPage,
+  // Start both lists loading before render. On the server the router waits for
+  // them and ships their settled state to the client (see `src/router.tsx`).
+  loader: ({ context: { registry } }) => {
+    registry.mount(feedingsAtom);
+    registry.mount(pumpingsAtom);
+  },
+  component: Tracker,
 });
-
-function IndexPage() {
-  // Server-rendered atoms, hydrated on the client (see `AtomHydration`).
-  return (
-    <AtomHydration>
-      <Tracker />
-    </AtomHydration>
-  );
-}
 
 /** Local "YYYY-MM-DDTHH:mm" for `<input type="datetime-local">`. */
 function toLocalInputValue(date: Date): string {
@@ -120,19 +116,6 @@ const SIDE_LABELS: Record<PumpSide, string> = {
   both: "Both",
 };
 
-/**
- * Renders the lifecycle of a mutation atom: typed errors with their message,
- * defects (unexpected bugs) generically. Waiting/success render nothing.
- */
-function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, RpcError> }) {
-  return AsyncResult.matchWithWaiting(result, {
-    onWaiting: () => null,
-    onSuccess: () => null,
-    onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-    onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-  });
-}
-
 const TABS = ["feeding", "pumping"] as const;
 
 type Tab = (typeof TABS)[number];
@@ -163,10 +146,6 @@ function latestEntries<A>(
 function Tracker() {
   const router = useRouter();
   const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
-  // Suspend until both lists have settled, so the server render contains
-  // real data and `AtomStateScript` serializes settled values.
-  useAtomSuspense(feedingsAtom, { includeFailure: true });
-  useAtomSuspense(pumpingsAtom, { includeFailure: true });
   // Both query atoms stay mounted so the hidden tab's data stays warm and
   // participates in focus revalidation.
   const feedings = useAtomValue(feedingsAtom);
@@ -306,14 +285,6 @@ function FeedingTab({
         <div className="form-row">
           <form.Field
             name="amount"
-            validators={{
-              onChange: ({ value }) => {
-                const ml = Number(value);
-                if (!Number.isFinite(ml) || ml <= 0) return "Please enter a valid amount in ml.";
-                if (ml > 1000) return "Amount must be at most 1000 ml.";
-                return undefined;
-              },
-            }}
             children={(field) => (
               <label className="field">
                 <span>Amount (ml)</span>
@@ -327,9 +298,6 @@ function FeedingTab({
                     </option>
                   ))}
                 </select>
-                {field.state.meta.errors.length > 0 && (
-                  <span className="error">{field.state.meta.errors.join(", ")}</span>
-                )}
               </label>
             )}
           />
@@ -354,26 +322,16 @@ function FeedingTab({
           />
         </div>
 
-        {AsyncResult.matchWithWaiting(addResult, {
-          onWaiting: () => null,
-          onSuccess: () => null,
-          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-        })}
+        <ResultError result={addResult} />
 
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Saving…" : "Add feeding"}
         </button>
       </form>
 
-      <WorkflowStatus result={deleteResult} />
+      <ResultError result={deleteResult} />
 
-      {AsyncResult.matchWithWaiting(result, {
-        onWaiting: () => null,
-        onSuccess: () => null,
-        onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-        onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-      })}
+      <ResultError result={result} />
 
       <section className="history">
         {feedings === undefined ? (
@@ -522,14 +480,6 @@ function PumpingTab({
         <div className="form-row">
           <form.Field
             name="duration"
-            validators={{
-              onChange: ({ value }) => {
-                const min = Number(value);
-                if (!Number.isFinite(min) || min <= 0) return "Enter a valid duration in minutes.";
-                if (min > 60) return "Duration must be at most 60 min.";
-                return undefined;
-              },
-            }}
             children={(field) => (
               <label className="field">
                 <span>Duration (min)</span>
@@ -543,22 +493,11 @@ function PumpingTab({
                     </option>
                   ))}
                 </select>
-                {field.state.meta.errors.length > 0 && (
-                  <span className="error">{field.state.meta.errors.join(", ")}</span>
-                )}
               </label>
             )}
           />
           <form.Field
             name="amount"
-            validators={{
-              onChange: ({ value }) => {
-                const ml = Number(value);
-                if (!Number.isFinite(ml) || ml <= 0) return "Enter a valid amount in ml.";
-                if (ml > 1000) return "Amount must be at most 1000 ml.";
-                return undefined;
-              },
-            }}
             children={(field) => (
               <label className="field">
                 <span>Amount (ml)</span>
@@ -572,9 +511,6 @@ function PumpingTab({
                     </option>
                   ))}
                 </select>
-                {field.state.meta.errors.length > 0 && (
-                  <span className="error">{field.state.meta.errors.join(", ")}</span>
-                )}
               </label>
             )}
           />
@@ -600,26 +536,16 @@ function PumpingTab({
           )}
         />
 
-        {AsyncResult.matchWithWaiting(addResult, {
-          onWaiting: () => null,
-          onSuccess: () => null,
-          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-        })}
+        <ResultError result={addResult} />
 
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Saving…" : "Add pumping session"}
         </button>
       </form>
 
-      <WorkflowStatus result={deleteResult} />
+      <ResultError result={deleteResult} />
 
-      {AsyncResult.matchWithWaiting(result, {
-        onWaiting: () => null,
-        onSuccess: () => null,
-        onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-        onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-      })}
+      <ResultError result={result} />
 
       <section className="history">
         {pumpings === undefined ? (

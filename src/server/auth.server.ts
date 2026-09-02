@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { Effect } from "effect";
-import { Cookies, HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpEffect, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import type * as HttpServerRequest_ from "effect/unstable/http/HttpServerRequest";
 import { NotConfigured } from "../shared/api";
 
@@ -35,20 +35,15 @@ export const sessionToken: Effect.Effect<string, NotConfigured> = Effect.gen(fun
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 });
 
-/** True when `cookieValue` matches the expected session token. */
-export const sessionTokenMatches = (
-  cookieValue: string | undefined,
-): Effect.Effect<boolean, NotConfigured> =>
-  Effect.map(sessionToken, (token) => cookieValue !== undefined && cookieValue === token);
-
-/** The session cookie value sent by the current HTTP request. */
-export const requestSessionCookie: Effect.Effect<string | undefined, never, Request> = Effect.map(
-  HttpServerRequest.HttpServerRequest,
-  (request) => {
-    const header = request.headers["cookie"];
-    return header ? Cookies.parseHeader(header)[COOKIE_NAME] : undefined;
-  },
-);
+/**
+ * True when `cookieValue` matches the expected session token. With no PIN
+ * configured nobody can be signed in, so a missing secret reads as `false`.
+ */
+export const sessionTokenMatches = (cookieValue: string | undefined): Effect.Effect<boolean> =>
+  sessionToken.pipe(
+    Effect.map((token) => cookieValue !== undefined && cookieValue === token),
+    Effect.catch(() => Effect.succeed(false)),
+  );
 
 const isSecureRequest = (request: HttpServerRequest.HttpServerRequest): boolean =>
   (request.headers["x-forwarded-proto"] ?? request.url.split(":")[0]) === "https";

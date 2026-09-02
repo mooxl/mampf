@@ -1,8 +1,7 @@
-import { RegistryProvider, useAtom } from "@effect/atom-react";
+import { useAtom } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { loginAtom, rpcErrorMessage } from "../client/rpc";
+import { ResultError, loginAtom } from "../client/rpc";
 import { isAuthed } from "../server/api";
 
 export const Route = createFileRoute("/pin")({
@@ -12,12 +11,7 @@ export const Route = createFileRoute("/pin")({
       throw redirect({ to: "/" });
     }
   },
-  // A per-request Atom registry keeps the mutation atoms request-safe during SSR.
-  component: () => (
-    <RegistryProvider>
-      <PinGate />
-    </RegistryProvider>
-  ),
+  component: PinGate,
 });
 
 function PinGate() {
@@ -69,12 +63,7 @@ function PinGate() {
             </label>
           )}
         />
-        {AsyncResult.matchWithWaiting(loginResult, {
-          onWaiting: () => null,
-          onSuccess: () => null,
-          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
-          onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
-        })}
+        <ResultError result={loginResult} />
         <button className="primary" type="submit" disabled={isSubmitting}>
           {isSubmitting ? "Checking…" : "Unlock"}
         </button>

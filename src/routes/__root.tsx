@@ -1,13 +1,22 @@
-import { HeadContent, Outlet, Scripts, createRootRoute, useRouter } from "@tanstack/react-router";
+import {
+  HeadContent,
+  Scripts,
+  createRootRouteWithContext,
+  useRouter,
+} from "@tanstack/react-router";
 import type { ErrorComponentProps } from "@tanstack/react-router";
+import type { AtomRegistry } from "effect/unstable/reactivity";
 import { useTransition } from "react";
 import styles from "../styles.css?url";
 
-export const Route = createRootRoute({
+export const Route = createRootRouteWithContext<{ registry: AtomRegistry.AtomRegistry }>()({
   head: () => ({
     meta: [
       { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" },
+      {
+        name: "viewport",
+        content: "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no",
+      },
       { title: "Mampf 🍼" },
     ],
     links: [{ rel: "stylesheet", href: styles }],

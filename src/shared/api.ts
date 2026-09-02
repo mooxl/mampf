@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { Rpc, RpcGroup, RpcMiddleware } from "effect/unstable/rpc";
 import { AddFeedingInput, AddPumpingInput, FeedingView, PumpingView } from "./domain";
 
 /**
@@ -22,11 +22,14 @@ export class NotConfigured extends Schema.TaggedError<NotConfigured>()("NotConfi
   message: Schema.String,
 }) {}
 
-/** Authenticated-only RPCs can also fail because the PIN secret is unset. */
-export type ApiError = NotAuthed | NotConfigured;
-
-/** Schema for the errors authenticated-only RPCs can fail with. */
-const ApiErrorSchema = Schema.Union([NotAuthed, NotConfigured]);
+/**
+ * Session-gate middleware: RPCs behind it fail with `NotAuthed` unless the
+ * request carries a valid session cookie. Implemented in `src/server/rpc.ts`;
+ * the client needs nothing (the cookie travels with the request).
+ */
+export class Authed extends RpcMiddleware.Service<Authed>()("mampf/Authed", {
+  error: NotAuthed,
+}) {}
 
 /**
  * The application API as a group of typed RPCs, shared between the server
@@ -34,39 +37,20 @@ const ApiErrorSchema = Schema.Union([NotAuthed, NotConfigured]);
  * tagged procedure with payload / success / error schemas.
  */
 export const MampfRpc = RpcGroup.make(
-  Rpc.make("Login", {
-    payload: { pin: Schema.String },
-    success: Schema.Void,
-    // A missing PIN secret surfaces when the visitor tries to sign in.
-    error: Schema.Union([WrongPin, NotConfigured]),
-  }),
-  Rpc.make("Logout", { success: Schema.Void }),
-  Rpc.make("ListFeedings", {
-    success: Schema.Array(FeedingView),
-    error: ApiErrorSchema,
-  }),
-  Rpc.make("AddFeeding", {
-    payload: AddFeedingInput,
-    success: FeedingView,
-    error: ApiErrorSchema,
-  }),
-  Rpc.make("DeleteFeeding", {
-    payload: { id: Schema.String },
-    success: Schema.Void,
-    error: ApiErrorSchema,
-  }),
-  Rpc.make("ListPumpings", {
-    success: Schema.Array(PumpingView),
-    error: ApiErrorSchema,
-  }),
-  Rpc.make("AddPumping", {
-    payload: AddPumpingInput,
-    success: PumpingView,
-    error: ApiErrorSchema,
-  }),
-  Rpc.make("DeletePumping", {
-    payload: { id: Schema.String },
-    success: Schema.Void,
-    error: ApiErrorSchema,
-  }),
-);
+  Rpc.make("ListFeedings", { success: Schema.Array(FeedingView) }),
+  Rpc.make("AddFeeding", { payload: AddFeedingInput, success: FeedingView }),
+  Rpc.make("DeleteFeeding", { payload: { id: Schema.String }, success: Schema.Void }),
+  Rpc.make("ListPumpings", { success: Schema.Array(PumpingView) }),
+  Rpc.make("AddPumping", { payload: AddPumpingInput, success: PumpingView }),
+  Rpc.make("DeletePumping", { payload: { id: Schema.String }, success: Schema.Void }),
+)
+  .middleware(Authed)
+  .add(
+    Rpc.make("Login", {
+      payload: { pin: Schema.String },
+      success: Schema.Void,
+      // A missing PIN secret surfaces when the visitor tries to sign in.
+      error: Schema.Union([WrongPin, NotConfigured]),
+    }),
+    Rpc.make("Logout", { success: Schema.Void }),
+  );

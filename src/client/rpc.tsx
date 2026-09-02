@@ -4,7 +4,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/
 import type * as HttpClientModule from "effect/unstable/http/HttpClient";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
-import { Atom, AtomRpc } from "effect/unstable/reactivity";
+import { AsyncResult, Atom, AtomRpc } from "effect/unstable/reactivity";
 import { MampfRpc, NotAuthed, NotConfigured, WrongPin } from "../shared/api";
 import { getSsrRequest } from "../shared/ssr-bridge";
 
@@ -87,7 +87,7 @@ export const deletePumpingAtom = MampfApi.mutation("DeletePumping");
 export type RpcError = NotAuthed | NotConfigured | WrongPin | RpcClientError;
 
 /** A user-facing message for any RPC error. */
-export const rpcErrorMessage = (error: unknown): string => {
+const rpcErrorMessage = (error: unknown): string => {
   if (
     Predicate.hasProperty(error, "message") &&
     Predicate.isString((error as { message: unknown }).message)
@@ -96,3 +96,16 @@ export const rpcErrorMessage = (error: unknown): string => {
   }
   return "Could not reach the server. Please try again.";
 };
+
+/**
+ * Renders the failure of a query or mutation atom: typed errors with their
+ * message, defects (unexpected bugs) generically. Waiting/success render nothing.
+ */
+export function ResultError({ result }: { result: AsyncResult.AsyncResult<unknown, RpcError> }) {
+  return AsyncResult.matchWithWaiting(result, {
+    onWaiting: () => null,
+    onSuccess: () => null,
+    onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
+    onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
+  });
+}
