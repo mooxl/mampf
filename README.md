@@ -84,19 +84,23 @@ The app is protected by a single shared PIN that you both use:
 
 ```
 src/
-├── routes/index.tsx      # UI: PIN gate, add form, quick amounts, per-day history
+├── shared/api.ts         # Effect models (Feeding, Pumping), errors, RPC group + Authed middleware
+├── shared/ssr-bridge.ts  # In-process RPC fetch during SSR (forwards the request cookie)
+├── server/rpc.ts         # RPC handlers on D1 via SqlModel/SqlSchema; web handler
+├── server/auth.server.ts # Shared-PIN session cookie (salted hash)
+├── server/api.ts         # isAuthed server function for the route guards
+├── client/rpc.tsx        # AtomRpc client + list atoms (SSR-hydrated, refresh on focus)
 ├── routes/__root.tsx     # HTML shell
-├── server/api.ts         # TanStack Start server functions (HTTP boundary)
-├── server/auth.server.ts # Shared-PIN session handling (cookie + salted hash)
-├── server/feedings.ts    # Effect domain: Feeding model + Feedings service
-├── server/runtime.ts     # ManagedRuntime: layers + D1 binding wiring
+├── routes/pin.tsx        # PIN gate
+├── routes/index.tsx      # Tracker: tabs (?tab=), forms, stats, per-day history
+├── routes/rpc.ts         # POST /rpc
 └── styles.css
-migrations/0001_feedings.sql
+migrations/0001_feedings.sql, 0002_pumping.sql
 ```
 
 Notes:
 
-- Feedings are stored in UTC; the UI groups them by the browser's local day,
+- Entries are stored in UTC; the UI groups them by the browser's local day,
   so both parents see "today" correctly on their own phones.
-- All server input is validated with Effect `Schema` (amount 1–2000 ml,
-  ISO timestamp) before it reaches the service layer.
+- All RPC payloads are validated with Effect `Schema` (amount 1–2000 ml,
+  ISO timestamp) before they reach the database.

@@ -1,13 +1,36 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/unstable/rpc";
-import { AddFeedingInput, AddPumpingInput, FeedingView, PumpingView } from "./domain";
+import { Model } from "effect/unstable/schema";
+
+const Ml = Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 })));
+const FeedingId = Schema.String.pipe(Schema.brand("FeedingId"));
+const PumpingId = Schema.String.pipe(Schema.brand("PumpingId"));
 
 /**
- * Tagged errors, per Effect v4 best practice: defined once with
- * `Schema.TaggedError`, so they are real classes (yieldable, `instanceof`)
- * on the server and have a Schema for the wire. The RPC layer serializes and
- * decodes them automatically — no envelope needed.
+ * Domain models. `Model.Class` derives every variant from one declaration:
+ * `Feeding` (select) / `Feeding.insert` for the database, `Feeding.json` /
+ * `Feeding.jsonCreate` for the RPC boundary. `id` and `createdAt` are
+ * generated on insert, so they are absent from `jsonCreate`.
  */
+export class Feeding extends Model.Class<Feeding>("Feeding")({
+  id: Model.UuidV4Insert(FeedingId),
+  amountMl: Ml,
+  fedAt: Schema.DateTimeUtcFromString,
+  createdAt: Model.DateTimeInsert,
+}) {}
+
+export const PumpSide = Schema.Literals(["left", "right", "both"]);
+export type PumpSide = typeof PumpSide.Type;
+
+export class Pumping extends Model.Class<Pumping>("Pumping")({
+  id: Model.UuidV4Insert(PumpingId),
+  side: PumpSide,
+  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
+  amountMl: Ml,
+  pumpedAt: Schema.DateTimeUtcFromString,
+  createdAt: Model.DateTimeInsert,
+}) {}
+
 export class NotAuthed extends Schema.TaggedError<NotAuthed>()("NotAuthed", {
   message: Schema.String,
 }) {}
@@ -22,35 +45,25 @@ export class NotConfigured extends Schema.TaggedError<NotConfigured>()("NotConfi
   message: Schema.String,
 }) {}
 
-/**
- * Session-gate middleware: RPCs behind it fail with `NotAuthed` unless the
- * request carries a valid session cookie. Implemented in `src/server/rpc.ts`;
- * the client needs nothing (the cookie travels with the request).
- */
+/** RPCs behind this middleware fail with `NotAuthed` without a valid session cookie. */
 export class Authed extends RpcMiddleware.Service<Authed>()("mampf/Authed", {
   error: NotAuthed,
 }) {}
 
-/**
- * The application API as a group of typed RPCs, shared between the server
- * handlers and the client. There are no paths or status codes: each RPC is a
- * tagged procedure with payload / success / error schemas.
- */
+/** The application API, shared between server handlers and client. */
 export const MampfRpc = RpcGroup.make(
-  Rpc.make("ListFeedings", { success: Schema.Array(FeedingView) }),
-  Rpc.make("AddFeeding", { payload: AddFeedingInput, success: FeedingView }),
-  Rpc.make("DeleteFeeding", { payload: { id: Schema.String }, success: Schema.Void }),
-  Rpc.make("ListPumpings", { success: Schema.Array(PumpingView) }),
-  Rpc.make("AddPumping", { payload: AddPumpingInput, success: PumpingView }),
-  Rpc.make("DeletePumping", { payload: { id: Schema.String }, success: Schema.Void }),
+  Rpc.make("ListFeedings", { success: Schema.Array(Feeding.json) }),
+  Rpc.make("AddFeeding", { payload: Feeding.jsonCreate, success: Feeding.json }),
+  Rpc.make("DeleteFeeding", { payload: { id: FeedingId } }),
+  Rpc.make("ListPumpings", { success: Schema.Array(Pumping.json) }),
+  Rpc.make("AddPumping", { payload: Pumping.jsonCreate, success: Pumping.json }),
+  Rpc.make("DeletePumping", { payload: { id: PumpingId } }),
 )
   .middleware(Authed)
   .add(
     Rpc.make("Login", {
       payload: { pin: Schema.String },
-      success: Schema.Void,
-      // A missing PIN secret surfaces when the visitor tries to sign in.
       error: Schema.Union([WrongPin, NotConfigured]),
     }),
-    Rpc.make("Logout", { success: Schema.Void }),
+    Rpc.make("Logout"),
   );
