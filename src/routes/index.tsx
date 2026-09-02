@@ -1,8 +1,9 @@
-import { RegistryProvider, useAtom, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { useAtom, useAtomRefresh, useAtomSuspense, useAtomValue } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { DateTime, Option, Schema } from "effect";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { Option, Schema } from "effect";
+import { AtomHydration } from "../client/atom-hydration";
 import {
   addFeedingAtom,
   addPumpingAtom,
@@ -11,12 +12,10 @@ import {
   feedingsAtom,
   logoutAtom,
   pumpingsAtom,
-} from "../client/atoms";
-import { loadFeedings, loadPumpings } from "../client/workflows";
+} from "../client/rpc";
+import { rpcErrorMessage, type RpcError } from "../client/rpc";
 import { isAuthed } from "../server/api";
-import type { ApiErrorData } from "../shared/api";
-import type { FeedingView } from "../server/feedings";
-import type { PumpSide, PumpingView } from "../server/pumpings";
+import type { FeedingView, PumpSide, PumpingView } from "../shared/domain";
 
 export const Route = createFileRoute("/")({
   // The active tab lives in the URL (?tab=pumping) so links are shareable and
@@ -27,37 +26,21 @@ export const Route = createFileRoute("/")({
     const result = Schema.decodeUnknownResult(tabSearchSchema)(search);
     return result._tag === "Success" ? result.success : { tab: undefined };
   },
-  // The redirect is a UX gate; every server function still enforces auth.
+  // The redirect is a UX gate; every RPC still enforces auth.
   beforeLoad: async () => {
     if (!(await isAuthed())) {
       throw redirect({ to: "/pin" });
     }
   },
-  // Fetches initial list data so the server render (and blocking client
-  // navigations) can paint real content. The data is only a seed — after
-  // hydration the query atoms below own all fetching and revalidation.
-  loader: async () => ({
-    feedings: await loadFeedings(),
-    pumpings: await loadPumpings(),
-  }),
-  // A per-request Atom registry keeps the query/mutation atoms request-safe
-  // during SSR. The loader data seeds the query atoms, so the first paint has
-  // data; `Atom.swr` then handles focus revalidation and staleness.
   component: IndexPage,
 });
 
 function IndexPage() {
-  const { feedings, pumpings } = Route.useLoaderData();
-  const seededAt = Date.now();
+  // Server-rendered atoms, hydrated on the client (see `AtomHydration`).
   return (
-    <RegistryProvider
-      initialValues={[
-        [feedingsAtom, AsyncResult.success(feedings, { timestamp: seededAt })],
-        [pumpingsAtom, AsyncResult.success(pumpings, { timestamp: seededAt })],
-      ]}
-    >
+    <AtomHydration>
       <Tracker />
-    </RegistryProvider>
+    </AtomHydration>
   );
 }
 
@@ -83,7 +66,7 @@ interface EntryBase {
 }
 
 function groupByDay<T extends EntryBase>(
-  entries: Array<T>,
+  entries: ReadonlyArray<T>,
   at: (entry: T) => string,
 ): Array<DayGroup<T>> {
   const days = new Map<string, DayGroup<T>>();
@@ -141,11 +124,11 @@ const SIDE_LABELS: Record<PumpSide, string> = {
  * Renders the lifecycle of a mutation atom: typed errors with their message,
  * defects (unexpected bugs) generically. Waiting/success render nothing.
  */
-function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, ApiErrorData> }) {
+function WorkflowStatus({ result }: { result: AsyncResult.AsyncResult<unknown, RpcError> }) {
   return AsyncResult.matchWithWaiting(result, {
     onWaiting: () => null,
     onSuccess: () => null,
-    onError: (error) => <p className="error">{error.message}</p>,
+    onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
     onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
   });
 }
@@ -168,8 +151,8 @@ type TabSearch = Schema.Schema.Type<typeof tabSearchSchema>;
  * into a loading state.
  */
 function latestEntries<A>(
-  result: AsyncResult.AsyncResult<Array<A>, ApiErrorData>,
-): Array<A> | undefined {
+  result: AsyncResult.AsyncResult<ReadonlyArray<A>, RpcError>,
+): ReadonlyArray<A> | undefined {
   if (result._tag === "Success") return result.value;
   if (result._tag === "Failure" && Option.isSome(result.previousSuccess)) {
     return result.previousSuccess.value.value;
@@ -180,6 +163,10 @@ function latestEntries<A>(
 function Tracker() {
   const router = useRouter();
   const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
+  // Suspend until both lists have settled, so the server render contains
+  // real data and `AtomStateScript` serializes settled values.
+  useAtomSuspense(feedingsAtom, { includeFailure: true });
+  useAtomSuspense(pumpingsAtom, { includeFailure: true });
   // Both query atoms stay mounted so the hidden tab's data stays warm and
   // participates in focus revalidation.
   const feedings = useAtomValue(feedingsAtom);
@@ -199,7 +186,7 @@ function Tracker() {
           className="signout"
           aria-label="Sign out"
           onClick={() => {
-            void runLogout(undefined).then((exit) => {
+            void runLogout({ payload: undefined }).then((exit) => {
               if (exit._tag === "Success") void router.invalidate();
             });
           }}
@@ -241,7 +228,7 @@ const step5Options = (max: number) =>
 function FeedingTab({
   result,
 }: {
-  result: AsyncResult.AsyncResult<Array<FeedingView>, ApiErrorData>;
+  result: AsyncResult.AsyncResult<ReadonlyArray<FeedingView>, RpcError>;
 }) {
   const refreshFeedings = useAtomRefresh(feedingsAtom);
   const [addResult, runAdd] = useAtom(addFeedingAtom, { mode: "promiseExit" });
@@ -255,10 +242,13 @@ function FeedingTab({
     },
     onSubmit: ({ value }) => {
       void runAdd({
-        amountMl: Math.round(Number(value.amount)),
-        // `new Date(...)` interprets the datetime-local value in the user's
-        // timezone; we store the instant as UTC ISO.
-        fedAt: new Date(value.fedAt).toISOString(),
+        payload: {
+          amountMl: Math.round(Number(value.amount)),
+          // `new Date(...)` interprets the datetime-local value in the user's
+          // timezone; we store the instant as UTC ISO.
+          fedAt: DateTime.fromDateUnsafe(new Date(value.fedAt)),
+        },
+        reactivityKeys: ["feedings"],
       }).then((exit) => {
         if (exit._tag === "Success") {
           // Reset the whole form (defaults + cleared validation) and bump the
@@ -282,7 +272,7 @@ function FeedingTab({
   const lastFeeding = feedings?.[0];
 
   const remove = (id: string) => {
-    void runDelete(id).then((exit) => {
+    void runDelete({ payload: { id }, reactivityKeys: ["feedings"] }).then((exit) => {
       if (exit._tag === "Success") refreshFeedings();
     });
   };
@@ -367,7 +357,7 @@ function FeedingTab({
         {AsyncResult.matchWithWaiting(addResult, {
           onWaiting: () => null,
           onSuccess: () => null,
-          onError: (error) => <p className="error">{error.message}</p>,
+          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
           onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
         })}
 
@@ -381,7 +371,7 @@ function FeedingTab({
       {AsyncResult.matchWithWaiting(result, {
         onWaiting: () => null,
         onSuccess: () => null,
-        onError: (error) => <p className="error">{error.message}</p>,
+        onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
         onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
       })}
 
@@ -427,7 +417,7 @@ function FeedingTab({
 function PumpingTab({
   result,
 }: {
-  result: AsyncResult.AsyncResult<Array<PumpingView>, ApiErrorData>;
+  result: AsyncResult.AsyncResult<ReadonlyArray<PumpingView>, RpcError>;
 }) {
   const refreshPumpings = useAtomRefresh(pumpingsAtom);
   const [addResult, runAdd] = useAtom(addPumpingAtom, { mode: "promiseExit" });
@@ -443,10 +433,13 @@ function PumpingTab({
     },
     onSubmit: ({ value }) => {
       void runAdd({
-        side: value.side,
-        durationMin: Math.round(Number(value.duration)),
-        amountMl: Math.round(Number(value.amount)),
-        pumpedAt: new Date(value.pumpedAt).toISOString(),
+        payload: {
+          side: value.side,
+          durationMin: Math.round(Number(value.duration)),
+          amountMl: Math.round(Number(value.amount)),
+          pumpedAt: DateTime.fromDateUnsafe(new Date(value.pumpedAt)),
+        },
+        reactivityKeys: ["pumpings"],
       }).then((exit) => {
         if (exit._tag === "Success") {
           // Reset the whole form (defaults + cleared validation) and bump the
@@ -472,7 +465,7 @@ function PumpingTab({
   const lastPumping = pumpings?.[0];
 
   const remove = (id: string) => {
-    void runDelete(id).then((exit) => {
+    void runDelete({ payload: { id }, reactivityKeys: ["pumpings"] }).then((exit) => {
       if (exit._tag === "Success") refreshPumpings();
     });
   };
@@ -485,9 +478,7 @@ function PumpingTab({
           <span className="stat-label">pumped today</span>
         </div>
         <div className="stat">
-          <span className="stat-value">
-            {pumpings === undefined ? "…" : `${todayMinutes} min`}
-          </span>
+          <span className="stat-value">{pumpings === undefined ? "…" : `${todayMinutes} min`}</span>
           <span className="stat-label">pumping today</span>
         </div>
         <div className="stat">
@@ -612,7 +603,7 @@ function PumpingTab({
         {AsyncResult.matchWithWaiting(addResult, {
           onWaiting: () => null,
           onSuccess: () => null,
-          onError: (error) => <p className="error">{error.message}</p>,
+          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
           onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
         })}
 
@@ -626,7 +617,7 @@ function PumpingTab({
       {AsyncResult.matchWithWaiting(result, {
         onWaiting: () => null,
         onSuccess: () => null,
-        onError: (error) => <p className="error">{error.message}</p>,
+        onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
         onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
       })}
 

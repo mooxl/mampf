@@ -11,7 +11,8 @@ import { Pumpings } from "./pumpings";
  */
 const DbLive = D1Client.layer({ db: env.DB }).pipe(Layer.orDie);
 
-/** The application runtime used by TanStack Start server functions. */
-export const runtime = ManagedRuntime.make(
-  Layer.merge(Feedings.layer, Pumpings.layer).pipe(Layer.provide(DbLive)),
-);
+/** The application services and their database, as a composable layer. */
+export const appLayer = Layer.merge(Feedings.layer, Pumpings.layer).pipe(Layer.provide(DbLive));
+
+/** The imperative runtime used by TanStack Start server functions. */
+export const runtime = ManagedRuntime.make(appLayer);

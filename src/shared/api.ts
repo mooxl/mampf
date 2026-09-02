@@ -1,9 +1,12 @@
 import { Schema } from "effect";
+import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import { AddFeedingInput, AddPumpingInput, FeedingView, PumpingView } from "./domain";
 
 /**
  * Tagged errors, per Effect v4 best practice: defined once with
  * `Schema.TaggedError`, so they are real classes (yieldable, `instanceof`)
- * on the server and have a Schema for the wire.
+ * on the server and have a Schema for the wire. The RPC layer serializes and
+ * decodes them automatically — no envelope needed.
  */
 export class NotAuthed extends Schema.TaggedError<NotAuthed>()("NotAuthed", {
   message: Schema.String,
@@ -19,37 +22,51 @@ export class NotConfigured extends Schema.TaggedError<NotConfigured>()("NotConfi
   message: Schema.String,
 }) {}
 
-/** Transport/protocol failure on the client (network error, 5xx, bad shape). */
-export class RequestFailed extends Schema.TaggedError<RequestFailed>()("RequestFailed", {
-  message: Schema.String,
-}) {}
+/** Authenticated-only RPCs can also fail because the PIN secret is unset. */
+export type ApiError = NotAuthed | NotConfigured;
 
-/** Every error that can cross the server-function boundary. */
-export type ApiError = NotAuthed | WrongPin | NotConfigured | RequestFailed;
+/** Schema for the errors authenticated-only RPCs can fail with. */
+const ApiErrorSchema = Schema.Union([NotAuthed, NotConfigured]);
 
 /**
- * How a tagged error looks on the wire: plain, JSON-serializable data. The
- * server serializes `Schema.TaggedError` instances to this shape, and clients
- * read `_tag`/`message` from it.
+ * The application API as a group of typed RPCs, shared between the server
+ * handlers and the client. There are no paths or status codes: each RPC is a
+ * tagged procedure with payload / success / error schemas.
  */
-export type ApiErrorData = {
-  readonly _tag: ApiError["_tag"];
-  readonly message: string;
-};
-
-/**
- * Wire envelope for server functions. Successes carry `value`, failures carry
- * the serialized tagged error. `value` is `null` for operations without a
- * result (JSON has no `undefined`).
- */
-export interface ApiOk<A> {
-  readonly _tag: "Ok";
-  readonly value: A | null;
-}
-
-export interface ApiErr {
-  readonly _tag: "Err";
-  readonly error: ApiErrorData;
-}
-
-export type ApiResult<A> = ApiOk<A> | ApiErr;
+export const MampfRpc = RpcGroup.make(
+  Rpc.make("Login", {
+    payload: { pin: Schema.String },
+    success: Schema.Void,
+    // A missing PIN secret surfaces when the visitor tries to sign in.
+    error: Schema.Union([WrongPin, NotConfigured]),
+  }),
+  Rpc.make("Logout", { success: Schema.Void }),
+  Rpc.make("ListFeedings", {
+    success: Schema.Array(FeedingView),
+    error: ApiErrorSchema,
+  }),
+  Rpc.make("AddFeeding", {
+    payload: AddFeedingInput,
+    success: FeedingView,
+    error: ApiErrorSchema,
+  }),
+  Rpc.make("DeleteFeeding", {
+    payload: { id: Schema.String },
+    success: Schema.Void,
+    error: ApiErrorSchema,
+  }),
+  Rpc.make("ListPumpings", {
+    success: Schema.Array(PumpingView),
+    error: ApiErrorSchema,
+  }),
+  Rpc.make("AddPumping", {
+    payload: AddPumpingInput,
+    success: PumpingView,
+    error: ApiErrorSchema,
+  }),
+  Rpc.make("DeletePumping", {
+    payload: { id: Schema.String },
+    success: Schema.Void,
+    error: ApiErrorSchema,
+  }),
+);

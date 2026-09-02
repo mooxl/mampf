@@ -1,10 +1,7 @@
 import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
 import { Model } from "effect/unstable/schema";
 import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
-
-/** Which breast(s) were pumped. */
-export const PumpSide = Schema.Literals(["left", "right", "both"]);
-export type PumpSide = typeof PumpSide.Type;
+import { PumpSide, PumpingView } from "../shared/domain";
 
 /**
  * A single pumping session.
@@ -22,18 +19,6 @@ export class Pumping extends Model.Class<Pumping>("Pumping")({
   createdAt: Model.DateTimeInsert,
 }) {}
 
-/** Serializable shape sent to the client (all fields plain strings/numbers). */
-export interface PumpingView {
-  readonly id: string;
-  readonly side: PumpSide;
-  readonly durationMin: number;
-  readonly amountMl: number;
-  /** ISO-8601 UTC string. */
-  readonly pumpedAt: string;
-  /** ISO-8601 UTC string. */
-  readonly createdAt: string;
-}
-
 const toView = (pumping: Pumping): PumpingView => ({
   id: pumping.id,
   side: pumping.side,
@@ -44,14 +29,6 @@ const toView = (pumping: Pumping): PumpingView => ({
 });
 
 const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toUtc(dt));
-
-/** Input validated at the server-function boundary. */
-export const AddPumpingInput = Schema.Struct({
-  side: PumpSide,
-  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
-  pumpedAt: Schema.DateTimeUtcFromString,
-});
 
 /**
  * Repository service for pumping sessions. The rest of the app depends on

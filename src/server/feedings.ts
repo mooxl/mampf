@@ -1,6 +1,7 @@
 import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
 import { Model } from "effect/unstable/schema";
 import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
+import { FeedingView } from "../shared/domain";
 
 /**
  * A single milk feeding.
@@ -24,16 +25,6 @@ export class Feeding extends Model.Class<Feeding>("Feeding")({
   createdAt: Model.DateTimeInsert,
 }) {}
 
-/** Serializable shape sent to the client (all fields plain strings/numbers). */
-export interface FeedingView {
-  readonly id: string;
-  readonly amountMl: number;
-  /** ISO-8601 UTC string. */
-  readonly fedAt: string;
-  /** ISO-8601 UTC string. */
-  readonly createdAt: string;
-}
-
 const toView = (feeding: Feeding): FeedingView => ({
   id: feeding.id,
   amountMl: feeding.amountMl,
@@ -42,12 +33,6 @@ const toView = (feeding: Feeding): FeedingView => ({
 });
 
 const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toUtc(dt));
-
-/** Input validated at the server-function boundary. */
-export const AddFeedingInput = Schema.Struct({
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
-  fedAt: Schema.DateTimeUtcFromString,
-});
 
 /**
  * Repository service for feedings. The rest of the app depends on `Feedings`

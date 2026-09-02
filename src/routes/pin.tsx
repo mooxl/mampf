@@ -2,7 +2,7 @@ import { RegistryProvider, useAtom } from "@effect/atom-react";
 import { useForm } from "@tanstack/react-form";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { loginAtom } from "../client/atoms";
+import { loginAtom, rpcErrorMessage } from "../client/rpc";
 import { isAuthed } from "../server/api";
 
 export const Route = createFileRoute("/pin")({
@@ -27,7 +27,7 @@ function PinGate() {
   const form = useForm({
     defaultValues: { pin: "" },
     onSubmit: ({ value }) => {
-      void runLogin(value.pin).then((exit) => {
+      void runLogin({ payload: { pin: value.pin } }).then((exit) => {
         if (exit._tag === "Success") void router.navigate({ to: "/" });
       });
     },
@@ -72,7 +72,7 @@ function PinGate() {
         {AsyncResult.matchWithWaiting(loginResult, {
           onWaiting: () => null,
           onSuccess: () => null,
-          onError: (error) => <p className="error">{error.message}</p>,
+          onError: (error) => <p className="error">{rpcErrorMessage(error)}</p>,
           onDefect: () => <p className="error">Something went wrong. Please try again.</p>,
         })}
         <button className="primary" type="submit" disabled={isSubmitting}>
