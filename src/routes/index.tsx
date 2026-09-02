@@ -127,22 +127,6 @@ const tabSearchSchema = Schema.Struct({
 
 type TabSearch = Schema.Schema.Type<typeof tabSearchSchema>;
 
-/**
- * The latest data carried by a query atom result: the current success value, or
- * the previous success while a refresh is in flight / has failed — so stale
- * data stays visible (stale-while-revalidate) instead of the list collapsing
- * into a loading state.
- */
-function latestEntries<A>(
-  result: AsyncResult.AsyncResult<ReadonlyArray<A>, RpcError>,
-): ReadonlyArray<A> | undefined {
-  if (result._tag === "Success") return result.value;
-  if (result._tag === "Failure" && Option.isSome(result.previousSuccess)) {
-    return result.previousSuccess.value.value;
-  }
-  return undefined;
-}
-
 function Tracker() {
   const router = useRouter();
   const [, runLogout] = useAtom(logoutAtom, { mode: "promiseExit" });
@@ -242,9 +226,10 @@ function FeedingTab({
 
   const isSubmitting = addResult.waiting;
 
-  // `undefined` while the first fetch is in flight (or has failed without any
-  // earlier data); defined (possibly stale) once data has arrived.
-  const feedings = latestEntries(result);
+  // `AsyncResult.value` keeps the previous success visible while a refresh is
+  // in flight or has failed (stale-while-revalidate): `undefined` only before
+  // the first fetch arrives.
+  const feedings = Option.getOrUndefined(AsyncResult.value(result));
   const days = groupByDay(feedings ?? [], (f) => f.fedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
@@ -412,9 +397,7 @@ function PumpingTab({
 
   const isSubmitting = addResult.waiting;
 
-  // `undefined` while the first fetch is in flight (or has failed without any
-  // earlier data); defined (possibly stale) once data has arrived.
-  const pumpings = latestEntries(result);
+  const pumpings = Option.getOrUndefined(AsyncResult.value(result));
   const days = groupByDay(pumpings ?? [], (p) => p.pumpedAt);
   const todayKey = toLocalInputValue(new Date()).slice(0, 10);
   const today = days.find((d) => d.key === todayKey);
