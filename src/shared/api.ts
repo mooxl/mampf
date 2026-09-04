@@ -1,26 +1,16 @@
 import { Schema } from "effect";
 import { Rpc, RpcGroup, RpcMiddleware } from "effect/unstable/rpc";
-import { AddFeedingInput, AddPumpingInput, FeedingView, PumpingView } from "./domain";
+import {
+  AddFeedingInput,
+  AddPumpingInput,
+  FeedingId,
+  FeedingView,
+  PumpingId,
+  PumpingView,
+} from "./domain";
+import { NotAuthed, NotConfigured, OperationUnavailable, RateLimited, WrongPin } from "./errors";
 
-/**
- * Tagged errors, per Effect v4 best practice: defined once with
- * `Schema.TaggedError`, so they are real classes (yieldable, `instanceof`)
- * on the server and have a Schema for the wire. The RPC layer serializes and
- * decodes them automatically — no envelope needed.
- */
-export class NotAuthed extends Schema.TaggedError<NotAuthed>()("NotAuthed", {
-  message: Schema.String,
-}) {}
-
-/** The submitted family PIN did not match. */
-export class WrongPin extends Schema.TaggedError<WrongPin>()("WrongPin", {
-  message: Schema.String,
-}) {}
-
-/** The server's `PIN` secret is missing (deployment misconfiguration). */
-export class NotConfigured extends Schema.TaggedError<NotConfigured>()("NotConfigured", {
-  message: Schema.String,
-}) {}
+export { NotAuthed, NotConfigured, OperationUnavailable, RateLimited, WrongPin } from "./errors";
 
 /**
  * Session-gate middleware: RPCs behind it fail with `NotAuthed` unless the
@@ -37,12 +27,28 @@ export class Authed extends RpcMiddleware.Service<Authed>()("mampf/Authed", {
  * tagged procedure with payload / success / error schemas.
  */
 export const MampfRpc = RpcGroup.make(
-  Rpc.make("ListFeedings", { success: Schema.Array(FeedingView) }),
-  Rpc.make("AddFeeding", { payload: AddFeedingInput, success: FeedingView }),
-  Rpc.make("DeleteFeeding", { payload: { id: Schema.String }, success: Schema.Void }),
-  Rpc.make("ListPumpings", { success: Schema.Array(PumpingView) }),
-  Rpc.make("AddPumping", { payload: AddPumpingInput, success: PumpingView }),
-  Rpc.make("DeletePumping", { payload: { id: Schema.String }, success: Schema.Void }),
+  Rpc.make("ListFeedings", { success: Schema.Array(FeedingView), error: OperationUnavailable }),
+  Rpc.make("AddFeeding", {
+    payload: AddFeedingInput,
+    success: FeedingView,
+    error: OperationUnavailable,
+  }),
+  Rpc.make("DeleteFeeding", {
+    payload: { id: FeedingId },
+    success: Schema.Void,
+    error: OperationUnavailable,
+  }),
+  Rpc.make("ListPumpings", { success: Schema.Array(PumpingView), error: OperationUnavailable }),
+  Rpc.make("AddPumping", {
+    payload: AddPumpingInput,
+    success: PumpingView,
+    error: OperationUnavailable,
+  }),
+  Rpc.make("DeletePumping", {
+    payload: { id: PumpingId },
+    success: Schema.Void,
+    error: OperationUnavailable,
+  }),
 )
   .middleware(Authed)
   .add(
@@ -50,7 +56,7 @@ export const MampfRpc = RpcGroup.make(
       payload: { pin: Schema.String },
       success: Schema.Void,
       // A missing PIN secret surfaces when the visitor tries to sign in.
-      error: Schema.Union([WrongPin, NotConfigured]),
+      error: Schema.Union([WrongPin, NotConfigured, RateLimited, OperationUnavailable]),
     }),
     Rpc.make("Logout", { success: Schema.Void }),
   );

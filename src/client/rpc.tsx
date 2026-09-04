@@ -5,7 +5,14 @@ import type * as HttpClientModule from "effect/unstable/http/HttpClient";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
 import { AsyncResult, Atom, AtomRpc } from "effect/unstable/reactivity";
-import { MampfRpc, NotAuthed, NotConfigured, WrongPin } from "../shared/api";
+import {
+  MampfRpc,
+  NotAuthed,
+  NotConfigured,
+  OperationUnavailable,
+  RateLimited,
+  WrongPin,
+} from "../shared/api";
 import { getSsrRequest } from "../shared/ssr-bridge";
 
 /** Placeholder origin for SSR RPC requests; they are handled in-process. */
@@ -84,7 +91,13 @@ export const addPumpingAtom = MampfApi.mutation("AddPumping");
 export const deletePumpingAtom = MampfApi.mutation("DeletePumping");
 
 /** Every error an atom can surface: tagged domain errors or transport failures. */
-export type RpcError = NotAuthed | NotConfigured | WrongPin | RpcClientError;
+export type RpcError =
+  | NotAuthed
+  | NotConfigured
+  | WrongPin
+  | RateLimited
+  | OperationUnavailable
+  | RpcClientError;
 
 /** A user-facing message for any RPC error. */
 const rpcErrorMessage = (error: unknown): string => {

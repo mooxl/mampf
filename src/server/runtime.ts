@@ -1,18 +1,15 @@
 import { D1Client } from "@effect/sql-d1";
-import { Layer, ManagedRuntime } from "effect";
+import { Layer } from "effect";
 import { env } from "cloudflare:workers";
 import { Feedings } from "./feedings";
 import { Pumpings } from "./pumpings";
 
 /**
- * The D1 binding from `wrangler.jsonc` (`binding: "DB"`) wrapped as an Effect
- * layer. The binding itself is only touched when the layer is built on the
- * first effect run, i.e. inside a request context.
+ * The D1 client is built in the RPC request's scope, not by the auth gate.
+ * Layer construction failure is a configuration defect; individual SQL
+ * operations expose typed failures through `storageOperation`.
  */
 const DbLive = D1Client.layer({ db: env.DB }).pipe(Layer.orDie);
 
 /** The application services and their database, as a composable layer. */
 export const appLayer = Layer.merge(Feedings.layer, Pumpings.layer).pipe(Layer.provide(DbLive));
-
-/** The imperative runtime used by TanStack Start server functions. */
-export const runtime = ManagedRuntime.make(appLayer);

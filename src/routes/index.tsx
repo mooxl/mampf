@@ -13,7 +13,9 @@ import {
   pumpingsAtom,
 } from "../client/rpc";
 import { ResultError, type RpcError } from "../client/rpc";
+import { prefetchAtoms } from "../client/prefetch";
 import { isAuthed } from "../server/api";
+import { MAX_AMOUNT_ML, MAX_PUMP_DURATION_MIN } from "../shared/domain";
 import type { FeedingView, PumpSide, PumpingView } from "../shared/domain";
 
 export const Route = createFileRoute("/")({
@@ -31,12 +33,9 @@ export const Route = createFileRoute("/")({
       throw redirect({ to: "/pin" });
     }
   },
-  // Start both lists loading before render. On the server the router waits for
-  // them and ships their settled state to the client (see `src/router.tsx`).
-  loader: ({ context: { registry } }) => {
-    registry.mount(feedingsAtom);
-    registry.mount(pumpingsAtom);
-  },
+  // Temporary subscriptions settle both lists, then React owns their mounts.
+  loader: ({ context: { registry }, abortController }) =>
+    prefetchAtoms(registry, [feedingsAtom, pumpingsAtom], abortController.signal),
   component: Tracker,
 });
 
@@ -235,7 +234,7 @@ function FeedingTab({
   const todayTotal = days.find((d) => d.key === todayKey)?.totalMl ?? 0;
   const lastFeeding = feedings?.[0];
 
-  const remove = (id: string) => {
+  const remove = (id: FeedingView["id"]) => {
     void runDelete({ payload: { id }, reactivityKeys: ["feedings"] }).then((exit) => {
       if (exit._tag === "Success") refreshFeedings();
     });
@@ -277,7 +276,7 @@ function FeedingTab({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                 >
-                  {step5Options(1000).map((ml) => (
+                  {step5Options(MAX_AMOUNT_ML).map((ml) => (
                     <option key={ml} value={String(ml)}>
                       {ml} ml
                     </option>
@@ -405,7 +404,7 @@ function PumpingTab({
   const todayMinutes = today?.entries.reduce((sum, p) => sum + p.durationMin, 0) ?? 0;
   const lastPumping = pumpings?.[0];
 
-  const remove = (id: string) => {
+  const remove = (id: PumpingView["id"]) => {
     void runDelete({ payload: { id }, reactivityKeys: ["pumpings"] }).then((exit) => {
       if (exit._tag === "Success") refreshPumpings();
     });
@@ -470,7 +469,7 @@ function PumpingTab({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                 >
-                  {step5Options(60).map((min) => (
+                  {step5Options(MAX_PUMP_DURATION_MIN).map((min) => (
                     <option key={min} value={String(min)}>
                       {min} min
                     </option>
@@ -488,7 +487,7 @@ function PumpingTab({
                   value={field.state.value}
                   onChange={(e) => field.handleChange(e.target.value)}
                 >
-                  {step5Options(1000).map((ml) => (
+                  {step5Options(MAX_AMOUNT_ML).map((ml) => (
                     <option key={ml} value={String(ml)}>
                       {ml} ml
                     </option>

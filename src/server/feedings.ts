@@ -1,7 +1,9 @@
 import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
 import { Model } from "effect/unstable/schema";
 import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
-import { FeedingView } from "../shared/domain";
+import { AddFeedingInput, FeedingId, FeedingView } from "../shared/domain";
+import type { OperationUnavailable } from "../shared/errors";
+import { storageOperation } from "./storage";
 
 /**
  * A single milk feeding.
@@ -14,14 +16,9 @@ import { FeedingView } from "../shared/domain";
  *   ISO-8601 UTC string
  * - `createdAt` is set automatically by the Effect clock on insert
  */
-/** Branded id so it cannot be mixed up with other strings. */
-export const FeedingId = Schema.String.pipe(Schema.brand("FeedingId"));
-export type FeedingId = typeof FeedingId.Type;
-
 export class Feeding extends Model.Class<Feeding>("Feeding")({
   id: Model.UuidV4Insert(FeedingId),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
-  fedAt: Schema.DateTimeUtcFromString,
+  ...AddFeedingInput.fields,
   createdAt: Model.DateTimeInsert,
 }) {}
 
@@ -41,12 +38,9 @@ const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toU
 export class Feedings extends Context.Service<
   Feedings,
   {
-    add(input: {
-      readonly amountMl: number;
-      readonly fedAt: DateTime.Utc;
-    }): Effect.Effect<FeedingView>;
-    remove(id: string): Effect.Effect<void>;
-    listRecentDays(days: number): Effect.Effect<Array<FeedingView>>;
+    add(input: AddFeedingInput): Effect.Effect<FeedingView, OperationUnavailable>;
+    remove(id: FeedingId): Effect.Effect<void, OperationUnavailable>;
+    listRecentDays(days: number): Effect.Effect<Array<FeedingView>, OperationUnavailable>;
   }
 >()("mampf/server/Feedings") {
   static readonly layer = Layer.effect(
@@ -66,29 +60,27 @@ export class Feedings extends Context.Service<
         execute: (since) => sql`SELECT * FROM feedings WHERE fedAt >= ${since} ORDER BY fedAt DESC`,
       });
 
-      const add = Effect.fn("Feedings.add")(function* (input: {
-        readonly amountMl: number;
-        readonly fedAt: DateTime.Utc;
-      }) {
+      const add = Effect.fn("Feedings.add")(function* (input: AddFeedingInput) {
         // `Feeding.insert.makeEffect` fills in the generated uuid + `createdAt`
         // using the Effect clock, so tests can control time with `TestClock`.
-        const inserted = yield* Feeding.insert.makeEffect(input).pipe(
-          Effect.flatMap(repo.insert),
-          // Database/encoding failures here are unexpected, so treat them as
-          // defects to keep the service error channel focused on the domain.
-          Effect.orDie,
+        const inserted = yield* storageOperation(
+          "Feedings.add",
+          Feeding.insert.makeEffect(input).pipe(
+            Effect.mapError((issue) => new Schema.SchemaError(issue)),
+            Effect.flatMap(repo.insert),
+          ),
         );
         return toView(inserted);
       });
 
-      const remove = Effect.fn("Feedings.remove")(function* (id: string) {
-        yield* sql`DELETE FROM feedings WHERE id = ${id}`.pipe(Effect.orDie);
+      const remove = Effect.fn("Feedings.remove")(function* (id: FeedingId) {
+        yield* storageOperation("Feedings.remove", repo.delete(id));
       });
 
       const listRecentDays = Effect.fn("Feedings.listRecentDays")(function* (days: number) {
         const now = yield* DateTime.now;
         const since = toIso(DateTime.subtractDuration(now, Duration.days(days)));
-        const rows = yield* listSince(since).pipe(Effect.orDie);
+        const rows = yield* storageOperation("Feedings.listRecentDays", listSince(since));
         return rows.map(toView);
       });
 

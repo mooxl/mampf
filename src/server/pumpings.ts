@@ -1,7 +1,9 @@
 import { Context, DateTime, Duration, Effect, Layer, Schema } from "effect";
 import { Model } from "effect/unstable/schema";
 import { SqlClient, SqlModel, SqlSchema } from "effect/unstable/sql";
-import { PumpSide, PumpingView } from "../shared/domain";
+import { AddPumpingInput, PumpingId, PumpingView } from "../shared/domain";
+import type { OperationUnavailable } from "../shared/errors";
+import { storageOperation } from "./storage";
 
 /**
  * A single pumping session.
@@ -11,11 +13,8 @@ import { PumpSide, PumpingView } from "../shared/domain";
  * set automatically by the Effect clock on insert.
  */
 export class Pumping extends Model.Class<Pumping>("Pumping")({
-  id: Model.UuidV4Insert(Schema.String.pipe(Schema.brand("PumpingId"))),
-  side: PumpSide,
-  durationMin: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 60 }))),
-  amountMl: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 1000 }))),
-  pumpedAt: Schema.DateTimeUtcFromString,
+  id: Model.UuidV4Insert(PumpingId),
+  ...AddPumpingInput.fields,
   createdAt: Model.DateTimeInsert,
 }) {}
 
@@ -38,14 +37,9 @@ const toIso = (dt: DateTime.DateTime): string => DateTime.formatIso(DateTime.toU
 export class Pumpings extends Context.Service<
   Pumpings,
   {
-    add(input: {
-      readonly side: PumpSide;
-      readonly durationMin: number;
-      readonly amountMl: number;
-      readonly pumpedAt: DateTime.Utc;
-    }): Effect.Effect<PumpingView>;
-    remove(id: string): Effect.Effect<void>;
-    listRecentDays(days: number): Effect.Effect<Array<PumpingView>>;
+    add(input: AddPumpingInput): Effect.Effect<PumpingView, OperationUnavailable>;
+    remove(id: PumpingId): Effect.Effect<void, OperationUnavailable>;
+    listRecentDays(days: number): Effect.Effect<Array<PumpingView>, OperationUnavailable>;
   }
 >()("mampf/server/Pumpings") {
   static readonly layer = Layer.effect(
@@ -66,31 +60,27 @@ export class Pumpings extends Context.Service<
           sql`SELECT * FROM pumpings WHERE pumpedAt >= ${since} ORDER BY pumpedAt DESC`,
       });
 
-      const add = Effect.fn("Pumpings.add")(function* (input: {
-        readonly side: PumpSide;
-        readonly durationMin: number;
-        readonly amountMl: number;
-        readonly pumpedAt: DateTime.Utc;
-      }) {
+      const add = Effect.fn("Pumpings.add")(function* (input: AddPumpingInput) {
         // `Pumping.insert.makeEffect` fills in the generated uuid + `createdAt`
         // using the Effect clock, so tests can control time with `TestClock`.
-        const inserted = yield* Pumping.insert.makeEffect(input).pipe(
-          Effect.flatMap(repo.insert),
-          // Database/encoding failures here are unexpected, so treat them as
-          // defects to keep the service error channel focused on the domain.
-          Effect.orDie,
+        const inserted = yield* storageOperation(
+          "Pumpings.add",
+          Pumping.insert.makeEffect(input).pipe(
+            Effect.mapError((issue) => new Schema.SchemaError(issue)),
+            Effect.flatMap(repo.insert),
+          ),
         );
         return toView(inserted);
       });
 
-      const remove = Effect.fn("Pumpings.remove")(function* (id: string) {
-        yield* sql`DELETE FROM pumpings WHERE id = ${id}`.pipe(Effect.orDie);
+      const remove = Effect.fn("Pumpings.remove")(function* (id: PumpingId) {
+        yield* storageOperation("Pumpings.remove", repo.delete(id));
       });
 
       const listRecentDays = Effect.fn("Pumpings.listRecentDays")(function* (days: number) {
         const now = yield* DateTime.now;
         const since = toIso(DateTime.subtractDuration(now, Duration.days(days)));
-        const rows = yield* listSince(since).pipe(Effect.orDie);
+        const rows = yield* storageOperation("Pumpings.listRecentDays", listSince(since));
         return rows.map(toView);
       });
 

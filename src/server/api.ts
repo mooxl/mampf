@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getCookie } from "@tanstack/react-start/server";
+import { Effect } from "effect";
 import { COOKIE_NAME, sessionTokenMatches } from "./auth.server";
-import { runtime } from "./runtime";
 
 /**
  * The one server function: the `beforeLoad` auth gate, so an unauthenticated
@@ -10,5 +10,5 @@ import { runtime } from "./runtime";
  * enforces auth via the `Authed` middleware.
  */
 export const isAuthed = createServerFn({ method: "GET" }).handler(() =>
-  runtime.runPromise(sessionTokenMatches(getCookie(COOKIE_NAME))),
+  Effect.runPromise(sessionTokenMatches(getCookie(COOKIE_NAME))),
 );

@@ -6,8 +6,11 @@ set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-# Recreate the local dev PIN file if a cleanup removed it.
-[ -f .dev.vars ] || printf 'PIN=1234\n' > .dev.vars
+# Recreate missing local credentials without rotating an existing secret.
+[ -f .dev.vars ] || (umask 077; printf 'PIN=1234\n' > .dev.vars)
+if ! grep -q '^SESSION_SECRET=' .dev.vars; then
+  (umask 077; printf '\nSESSION_SECRET=%s\n' "$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')" >> .dev.vars)
+fi
 
 # Regenerate worker types only if missing (cheap repair, no-op when present).
 if [ ! -f worker-configuration.d.ts ]; then

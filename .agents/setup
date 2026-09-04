@@ -45,14 +45,18 @@ step "dependencies" pnpm install --frozen-lockfile
 # go straight to GitHub in future orbs.
 step "git remote" git remote set-url origin https://github.com/mooxl/mampf.git
 
-# Regenerate the Cloudflare worker types (gitignored, needed for `tsc --noEmit`).
-step "typegen" pnpm cf-typegen
-
-# Local dev PIN so the app is usable in the orb (gitignored).
+# Local dev credentials, never production secrets (gitignored).
 if [ ! -f .dev.vars ]; then
-  printf 'PIN=1234\n' > .dev.vars
+  (umask 077; printf 'PIN=1234\n' > .dev.vars)
   echo "==> created .dev.vars with the default local dev PIN (1234)"
 fi
+if ! grep -q '^SESSION_SECRET=' .dev.vars; then
+  (umask 077; printf '\nSESSION_SECRET=%s\n' "$(node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))')" >> .dev.vars)
+  echo "==> generated local session signing secret"
+fi
+
+# Regenerate types after creating local secret bindings (gitignored).
+step "typegen" pnpm cf-typegen
 
 # Apply D1 migrations to the local miniflare database.
 # Re-runs are cheap: wrangler skips already-applied migrations.

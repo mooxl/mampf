@@ -1,6 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
 import { createRouter } from "@tanstack/react-router";
-import { Predicate } from "effect";
 import { AtomRegistry, Hydration } from "effect/unstable/reactivity";
 import type { ReactNode } from "react";
 import { routeTree } from "./routeTree.gen";
@@ -13,7 +12,7 @@ import { routeTree } from "./routeTree.gen";
  */
 export function getRouter() {
   const registry = AtomRegistry.make();
-  return createRouter({
+  const router = createRouter({
     routeTree,
     context: { registry },
     defaultPreload: "intent",
@@ -21,16 +20,16 @@ export function getRouter() {
     Wrap: ({ children }: { children: ReactNode }) => (
       <RegistryContext.Provider value={registry}>{children}</RegistryContext.Provider>
     ),
-    dehydrate: async () => {
-      // Wait for the atoms started by loaders to leave their initial state.
-      const pending = Hydration.dehydrate(registry, { encodeInitialAs: "promise" });
-      await Promise.all(
-        Hydration.toValues(pending)
-          .map((a) => a.resultPromise)
-          .filter(Predicate.isNotUndefined),
-      );
-      return Hydration.dehydrate(registry);
-    },
+    // Loaders have already settled their queries before dehydration.
+    dehydrate: () => Hydration.dehydrate(registry),
     hydrate: (state) => Hydration.hydrate(registry, state),
   });
+
+  // Start owns streaming completion/cancellation and early redirects/errors.
+  // Register before SSR attaches, rather than disposing when fetch() returns
+  // (which is too early for a streaming response).
+  router.serverSsrLifecycle = {
+    onServerSsrAttach: [(ssr) => ssr.onCleanup(() => registry.dispose())],
+  };
+  return router;
 }
